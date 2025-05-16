@@ -7,7 +7,9 @@ from qdrant_client import QdrantClient
 from qdrant_client.http import models
 from sentence_transformers import SentenceTransformer
 import re
-import pdfplumber
+import re
+from pdf2image import convert_from_path
+import pytesseract
 from config.env import QDRANT_HOST, QDRANT_PORT, RAG_DATA_DIR
 from utils.logging import setup_logging
 from utils.validators import validate_rag_dir
@@ -63,7 +65,7 @@ class CustomRAGTool(Toolkit):
             raise
 
     def _load_documents(self):
-        """Load and process PDF documents from RAG_DATA_DIR, extract text and tables, create embeddings, and upsert into Qdrant with detailed metadata."""
+        """Load and process PDF documents from RAG_DATA_DIR, extract text via OCR, create embeddings, and upsert into Qdrant."""
         try:
             # Tạo ánh xạ công ty từ thư mục PDF
             company_mapping = build_company_mapping()
@@ -75,20 +77,33 @@ class CustomRAGTool(Toolkit):
             chunk_id = 0
             processed_files = []
             failed_files = []
-            CHUNK_SIZE = 1000  # Tăng kích thước chunk
+            CHUNK_SIZE = 1000  # Kích thước chunk
             BATCH_SIZE = 100  # Số points mỗi lần upsert
+            MAX_PAGES = 50  # Giới hạn số trang để tối ưu hiệu suất
 
             def clean_text(text):
-                """Làm sạch text, giữ tên riêng, loại khoảng trắng thừa."""
-                text = re.sub(r'\s+', ' ', text)
+                """Làm sạch text OCR, giữ tên riêng, loại nhiễu."""
+                text = re.sub(r'\s+', ' ', text)  # Loại khoảng trắng thừa
                 text = re.sub(r'(?<=\w)- (?=\w)', '', text)  # Loại gạch nối giữa từ
+                text = re.sub(r'[^\w\s.,!?&-]', '', text)  # Loại ký tự đặc biệt
                 return text.strip()
+
+            def detect_table_lines(text):
+                """Nhận diện và định dạng bảng từ text OCR."""
+                lines = text.split('\n')
+                table_lines = []
+                for line in lines:
+                    # Heuristic: dòng có nhiều khoảng cách đều hoặc ký tự '|' là bảng
+                    if '|' in line or len(line.split()) > 3 and len(set(len(word) for word in line.split() if word)) < 3:
+                        table_lines.append(line.strip())
+                if table_lines:
+                    return '\n'.join(table_lines) + '\n'
+                return ''
 
             def chunk_text(text, chunk_size=CHUNK_SIZE):
                 """Chia text thành chunk, giữ ngữ nghĩa."""
                 chunks = []
                 while len(text) > chunk_size:
-                    # Tìm điểm cắt tự nhiên (dấu câu hoặc xuống dòng)
                     match = re.search(r'([.!?\n])\s', text[:chunk_size][::-1])
                     if match:
                         last_period_index = chunk_size - match.start() - 1
@@ -111,33 +126,30 @@ class CustomRAGTool(Toolkit):
                     continue
                 filepath = os.path.join(RAG_DATA_DIR, filename)
                 try:
-                    # Kiểm tra file hợp lệ
-                    with pdfplumber.open(filepath) as pdf:
-                        if not pdf.pages:
-                            logger.warning(f"Empty PDF: {filename}")
-                            failed_files.append(filename)
-                            continue
-                        text = ""
-                        has_content = False
-                        for page in pdf.pages:
-                            # Extract tables
-                            tables = page.extract_tables()
-                            for table in tables:
-                                cleaned_table = [[str(cell) if cell is not None else "" for cell in row] for row in table]
-                                table_text = "\n".join([" | ".join(row) for row in cleaned_table]) + "\n"
-                                text += table_text
-                                if table_text.strip():
-                                    has_content = True
-                            # Extract free text
-                            page_text = page.extract_text()
-                            if page_text:
-                                text += clean_text(page_text) + "\n"
+                    # Chuyển PDF thành hình ảnh và dùng OCR
+                    text = ""
+                    has_content = False
+                    logger.info(f"Processing {filename} with OCR")
+                    try:
+                        images = convert_from_path(filepath, first_page=1, last_page=MAX_PAGES)
+                        for i, image in enumerate(images):
+                            ocr_text = pytesseract.image_to_string(image, lang='eng')
+                            if ocr_text.strip():
+                                # Tách bảng và text
+                                table_text = detect_table_lines(ocr_text)
+                                non_table_text = clean_text(re.sub(r'\n\s*\n', '\n', ocr_text))  # Loại dòng trống
+                                text += table_text + non_table_text + '\n'
                                 has_content = True
-                        
-                        if not has_content:
-                            logger.warning(f"No text or tables extracted from {filename}. Likely image-based PDF.")
-                            failed_files.append(filename)
-                            continue
+                            logger.debug(f"OCR page {i+1}/{len(images)} of {filename}: {len(ocr_text)} characters")
+                    except Exception as e:
+                        logger.error(f"OCR failed for {filename}: {str(e)}")
+                        failed_files.append(filename)
+                        continue
+
+                    if not has_content:
+                        logger.warning(f"No content extracted from {filename} via OCR.")
+                        failed_files.append(filename)
+                        continue
 
                     # Extract metadata from content
                     raw_company = filename.replace(".pdf", "").split("_")[0]
