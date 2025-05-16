@@ -1,7 +1,7 @@
 phidata
-llama-index==0.10.0 
+groq
 sqlalchemy==2.0.0 
-python-dotenv==1.0.0 
+load_dotenv
 qdrant-client==1.11.0 
 psycopg2-binary==2.9.9 
 PyPDF2==3.0.1 
@@ -9,3 +9,4 @@ yfinance==0.2.40
 pandas==2.2.2
 sentence-transformers==2.6.0
 gradio
+tabulate

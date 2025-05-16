@@ -1,0 +1,90 @@
+database_description: Dow Jones Industrial Average (DJIA) companies database
+
+tables:
+  companies:
+    description: Contains basic company information and metrics
+    columns:
+      - name: symbol
+        type: VARCHAR(10)
+        constraints: PRIMARY KEY
+        description: Stock ticker symbol (e.g., 'AAPL')
+      - name: name
+        type: VARCHAR(255)
+        description: Full name of the company (e.g., 'Apple Inc.')
+      - name: sector
+        type: VARCHAR(100)
+        description: Economic sector classification (e.g., 'Technology')
+      - name: industry
+        type: VARCHAR(100)
+        description: Specific industry within sector (e.g., 'Consumer Electronics')
+      - name: country
+        type: VARCHAR(100)
+        description: Country where company is headquartered (e.g., 'United States')
+      - name: website
+        type: VARCHAR(255)
+        description: Company's official website URL
+      - name: market_cap
+        type: BIGINT
+        description: Market capitalization value in USD
+      - name: pe_ratio
+        type: DECIMAL(10,2)
+        description: Price-to-earnings ratio
+      - name: dividend_yield
+        type: DECIMAL(5,2)
+        description: Annual dividend yield percentage
+      - name: week_high_52
+        type: DECIMAL(10,2)
+        description: Highest stock price in the last 52 weeks
+      - name: week_low_52
+        type: DECIMAL(10,2)
+        description: Lowest stock price in the last 52 weeks
+      - name: description
+        type: TEXT
+        description: Detailed company description
+
+  stock_prices:
+    description: Contains historical price information for stocks
+    columns:
+      - name: id
+        type: SERIAL
+        constraints: PRIMARY KEY
+        description: Unique identifier
+      - name: symbol
+        type: VARCHAR(10)
+        constraints: FOREIGN KEY referencing companies.symbol
+        description: Stock ticker symbol
+      - name: date
+        type: DATE
+        description: Date of the price record (YYYY-MM-DD)
+      - name: open_price
+        type: DECIMAL(10,2)
+        description: Opening price for the day
+      - name: high_price
+        type: DECIMAL(10,2)
+        description: Highest price during the day
+      - name: low_price
+        type: DECIMAL(10,2)
+        description: Lowest price during the day
+      - name: close_price
+        type: DECIMAL(10,2)
+        description: Closing price for the day
+      - name: volume
+        type: BIGINT
+        description: Trading volume for the day
+      - name: dividends
+        type: DECIMAL(10,2)
+        description: Dividends paid
+      - name: stock_splits
+        type: DECIMAL(10,2)
+        description: Stock split ratio
+
+relationships:
+  - name: companies_to_stock_prices
+    type: one-to-many
+    description: One company can have many price records
+    from:
+      table: companies
+      column: symbol
+    to:
+      table: stock_prices
+      column: symbol

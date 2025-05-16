@@ -1,0 +1,42 @@
+database_description: DJIA companies database
+tables:
+  companies:
+    description: Contains information about companies in the DJIA index
+    columns:
+    - name: symbol
+      type: VARCHAR(10)
+      constraints: PRIMARY KEY
+      description: Stock ticker symbol (e.g., 'AAPL')
+    - name: name
+      type: VARCHAR(255)
+      description: Full name of the company (e.g., 'Apple Inc.')
+    - name: description
+      type: TEXT
+      description: Detailed company description
+  stock_prices:
+    description: Contains price information for the DJIA companies
+    columns:
+    - name: id
+      type: SERIAL
+      constraints: PRIMARY KEY
+      description: Unique identifier
+    - name: symbol
+      type: VARCHAR(10)
+      constraints: FOREIGN KEY referencing companies.symbol
+      description: Stock ticker symbol
+    - name: date
+      type: DATE
+      description: Date of the price record (YYYY-MM-DD)
+    - name: close_price
+      type: DECIMAL(10,2)
+      description: Closing price for the day
+relationships:
+- name: companies_to_stock_prices
+  type: one-to-many
+  description: One company can have many price records
+  from:
+    table: companies
+    column: symbol
+  to:
+    table: stock_prices
+    column: symbol
