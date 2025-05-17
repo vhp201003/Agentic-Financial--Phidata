@@ -3,6 +3,7 @@ import os
 import sys
 from pathlib import Path
 import json
+from datetime import date, datetime  # Thêm import để xử lý date
 
 # Thêm thư mục gốc dự án vào sys.path
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -41,6 +42,10 @@ class CustomSQLTool(Toolkit):
         try:
             with self.engine.connect() as conn:
                 result = pd.read_sql_query(text(query), conn)
+                # Chuyển đổi cột kiểu date thành chuỗi định dạng YYYY-MM-DD
+                for column in result.columns:
+                    if result[column].dtype == 'datetime64[ns]' or isinstance(result[column].iloc[0] if not result.empty else None, (date, datetime)):
+                        result[column] = result[column].apply(lambda x: x.strftime('%Y-%m-%d') if pd.notnull(x) else None)
                 result_json = result.to_dict(orient='records') if not result.empty else []
                 return json.dumps({
                     "status": "success",

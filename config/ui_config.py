@@ -7,7 +7,7 @@ sys.path.append(str(BASE_DIR))
 # Configuration settings for the Financial AI Agent
 
 # API configuration
-API_URL = "http://localhost:8010"
+API_URL = "http://localhost:8000"
 
 # Agent endpoint mapping
 AGENT_ENDPOINTS = {
@@ -35,12 +35,18 @@ body {
     box-sizing: border-box;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
 }
-.chatbot {
+.chatbot-container {
     flex-grow: 1;
     width: 100%;
     overflow-y: auto;
-    margin-bottom: 20px;
+    padding-bottom: 120px;
+    box-sizing: border-box;
+}
+.chatbot {
+    height: 100%;
+    overflow-y: auto;
 }
 .chatbot .message {
     border-radius: 15px;
@@ -66,8 +72,26 @@ body {
     background-color: #2d2d2d;
     border-radius: 10px;
     padding: 10px;
-    width: 100%;
+    width: calc(100% - 40px);
     box-sizing: border-box;
+    position: fixed;
+    bottom: 70px;
+    left: 20px;
+    right: 20px;
+    display: flex;
+    align-items: center;
+    z-index: 1000;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+}
+.button-container {
+    display: flex;
+    justify-content: center;
+    margin-top: 10px;
+    position: fixed;
+    bottom: 20px;
+    left: 0;
+    right: 0;
+    z-index: 1000;
 }
 #agent-dropdown {
     background-color: #333;
@@ -79,6 +103,7 @@ body {
     color: white;
     border: none;
     border-radius: 8px;
+    margin: 0 5px;
 }
 #submit-btn:hover, #clear-btn:hover {
     background-color: #0056b3;
@@ -87,5 +112,15 @@ h1, h3 {
     color: #e0e0e0;
     text-align: center;
     margin: 10px 0;
+}
+.chatbot-container::-webkit-scrollbar {
+    width: 8px;
+}
+.chatbot-container::-webkit-scrollbar-thumb {
+    background-color: #007bff;
+    border-radius: 4px;
+}
+.chatbot-container::-webkit-scrollbar-track {
+    background-color: #2d2d2d;
 }
 """

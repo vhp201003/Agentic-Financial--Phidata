@@ -33,7 +33,7 @@ def build_company_mapping() -> dict:
         # Thêm các biến thể khác (ví dụ: Apple Inc. → Apple)
         if " " not in normalized_name:  # Chỉ thêm biến thể cho tên ngắn
             mapping[company_name.lower()] = company_name
-        logger.debug(f"Added mapping: {normalized_name} → {company_name}")
+        # logger.debug(f"Added mapping: {normalized_name} → {company_name}")
     
     return mapping
 

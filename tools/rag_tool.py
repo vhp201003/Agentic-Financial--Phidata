@@ -7,7 +7,6 @@ from qdrant_client import QdrantClient
 from qdrant_client.http import models
 from sentence_transformers import SentenceTransformer
 import re
-import re
 from pdf2image import convert_from_path
 import pytesseract
 from config.env import QDRANT_HOST, QDRANT_PORT, RAG_DATA_DIR
@@ -17,7 +16,6 @@ from utils.company_mapping import build_company_mapping, map_company_name, norma
 import json
 from sklearn.metrics.pairwise import cosine_similarity
 
-# Thêm thư mục gốc dự án vào sys.path
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(BASE_DIR))
 
@@ -27,22 +25,11 @@ class CustomRAGTool(Toolkit):
     def __init__(self):
         super().__init__(name="rag_tool")
         try:
-            # Kiểm tra thư mục RAG
             validate_rag_dir(RAG_DATA_DIR)
-            
-            # Khởi tạo Qdrant client
             self.client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
             self.collection_name = "financial_docs"
-            
-            # Khởi tạo mô hình embedding
             self.model = SentenceTransformer("all-MiniLM-L6-v2")
-            
-            # Tạo collection nếu chưa tồn tại
             self._create_collection()
-            
-            # # Tải và xử lý tài liệu
-            # self._load_documents()
-            
             logger.info("RAG tool initialized successfully")
         except Exception as e:
             logger.error(f"Failed to initialize RAG tool: {str(e)}")
@@ -55,7 +42,7 @@ class CustomRAGTool(Toolkit):
                 self.client.create_collection(
                     collection_name=self.collection_name,
                     vectors_config=models.VectorParams(
-                        size=384,  # Kích thước vector của all-MiniLM-L6-v2
+                        size=384,
                         distance=models.Distance.COSINE
                     )
                 )
@@ -67,33 +54,31 @@ class CustomRAGTool(Toolkit):
     def _load_documents(self):
         """Load and process PDF documents from RAG_DATA_DIR, extract text via OCR, create embeddings, and upsert into Qdrant."""
         try:
-            # Tạo ánh xạ công ty từ thư mục PDF
             company_mapping = build_company_mapping()
             logger.info(f"Found {len(company_mapping)} companies in RAG_DATA_DIR: {list(company_mapping.values())}")
+            logger.debug(f"Company mapping: {company_mapping}")
             
             documents = []
             doc_ids = []
             doc_names = []
+            companies = []  # Thêm danh sách để gán company cho từng chunk
             chunk_id = 0
             processed_files = []
             failed_files = []
-            CHUNK_SIZE = 1000  # Kích thước chunk
-            BATCH_SIZE = 100  # Số points mỗi lần upsert
-            MAX_PAGES = 50  # Giới hạn số trang để tối ưu hiệu suất
+            CHUNK_SIZE = 1000
+            BATCH_SIZE = 100
+            MAX_PAGES = 100
 
             def clean_text(text):
-                """Làm sạch text OCR, giữ tên riêng, loại nhiễu."""
-                text = re.sub(r'\s+', ' ', text)  # Loại khoảng trắng thừa
-                text = re.sub(r'(?<=\w)- (?=\w)', '', text)  # Loại gạch nối giữa từ
-                text = re.sub(r'[^\w\s.,!?&-]', '', text)  # Loại ký tự đặc biệt
+                text = re.sub(r'\s+', ' ', text)
+                text = re.sub(r'(?<=\w)- (?=\w)', '', text)
+                text = re.sub(r'[^\w\s.,!?&-]', '', text)
                 return text.strip()
 
             def detect_table_lines(text):
-                """Nhận diện và định dạng bảng từ text OCR."""
                 lines = text.split('\n')
                 table_lines = []
                 for line in lines:
-                    # Heuristic: dòng có nhiều khoảng cách đều hoặc ký tự '|' là bảng
                     if '|' in line or len(line.split()) > 3 and len(set(len(word) for word in line.split() if word)) < 3:
                         table_lines.append(line.strip())
                 if table_lines:
@@ -101,7 +86,6 @@ class CustomRAGTool(Toolkit):
                 return ''
 
             def chunk_text(text, chunk_size=CHUNK_SIZE):
-                """Chia text thành chunk, giữ ngữ nghĩa."""
                 chunks = []
                 while len(text) > chunk_size:
                     match = re.search(r'([.!?\n])\s', text[:chunk_size][::-1])
@@ -112,7 +96,7 @@ class CustomRAGTool(Toolkit):
                         last_period_index = space_index if space_index != -1 else chunk_size
                     
                     chunk = text[:last_period_index].strip()
-                    if len(chunk) >= 50:  # Loại chunk quá ngắn
+                    if len(chunk) >= 50:
                         chunks.append(chunk)
                     text = text[last_period_index+1:].lstrip()
                 
@@ -120,13 +104,13 @@ class CustomRAGTool(Toolkit):
                     chunks.append(text.strip())
                 return chunks
 
+            logger.info(f"Files in RAG_DATA_DIR: {os.listdir(RAG_DATA_DIR)}")
             for filename in os.listdir(RAG_DATA_DIR):
                 if not filename.endswith(".pdf"):
                     logger.debug(f"Skipping non-PDF file: {filename}")
                     continue
                 filepath = os.path.join(RAG_DATA_DIR, filename)
                 try:
-                    # Chuyển PDF thành hình ảnh và dùng OCR
                     text = ""
                     has_content = False
                     logger.info(f"Processing {filename} with OCR")
@@ -135,14 +119,13 @@ class CustomRAGTool(Toolkit):
                         for i, image in enumerate(images):
                             ocr_text = pytesseract.image_to_string(image, lang='eng')
                             if ocr_text.strip():
-                                # Tách bảng và text
                                 table_text = detect_table_lines(ocr_text)
-                                non_table_text = clean_text(re.sub(r'\n\s*\n', '\n', ocr_text))  # Loại dòng trống
+                                non_table_text = clean_text(re.sub(r'\n\s*\n', '\n', ocr_text))
                                 text += table_text + non_table_text + '\n'
                                 has_content = True
-                            logger.debug(f"OCR page {i+1}/{len(images)} of {filename}: {len(ocr_text)} characters")
+                            logger.debug(f"OCR page {i+1}/{len(images)} of {filename}: {len(ocr_text)} characters, sample={ocr_text[:100]}")
                     except Exception as e:
-                        logger.error(f"OCR failed for {filename}: {str(e)}")
+                        logger.error(f"OCR failed for {filename}: {str(e)}, filepath={filepath}")
                         failed_files.append(filename)
                         continue
 
@@ -151,15 +134,17 @@ class CustomRAGTool(Toolkit):
                         failed_files.append(filename)
                         continue
 
-                    # Extract metadata from content
                     raw_company = filename.replace(".pdf", "").split("_")[0]
                     company = map_company_name(raw_company, company_mapping)
+                    if not company:
+                        logger.error(f"Failed to map company for {filename}: raw_company={raw_company}, company_mapping={company_mapping}")
+                        failed_files.append(filename)
+                        continue
                     year_match = re.search(r"\b(202[0-5])\b", text)
                     year = int(year_match.group(1)) if year_match else 2024
                     report_type = "annual_report" if "Annual" in filename.lower() else "financial_report"
-                    logger.debug(f"Processed {filename}: company={company}, year={year}, report_type={report_type}, text_length={len(text)}")
+                    logger.debug(f"Processed {filename}: raw_company={raw_company}, company={company}, year={year}, report_type={report_type}, text_length={len(text)}")
 
-                    # Chia text thành chunk
                     chunks = chunk_text(text, CHUNK_SIZE)
                     logger.debug(f"Generated {len(chunks)} chunks for {filename}: sample={chunks[0][:100] if chunks else ''}")
 
@@ -167,11 +152,12 @@ class CustomRAGTool(Toolkit):
                         documents.append(chunk)
                         doc_ids.append(chunk_id)
                         doc_names.append(filename)
+                        companies.append(company)  # Gán company cho từng chunk
                         chunk_id += 1
                     processed_files.append(filename)
 
                 except Exception as e:
-                    logger.error(f"Failed to process PDF {filename}: {str(e)}")
+                    logger.error(f"Failed to process PDF {filename}: {str(e)}, filepath={filepath}")
                     failed_files.append(filename)
                     continue
 
@@ -183,14 +169,12 @@ class CustomRAGTool(Toolkit):
             if failed_files:
                 logger.warning(f"Failed to process {len(failed_files)} files: {failed_files}")
 
-            # Create embeddings
             try:
                 embeddings = self.model.encode(documents, show_progress_bar=True)
             except Exception as e:
                 logger.error(f"Failed to create embeddings: {str(e)}")
                 raise
 
-            # Prepare points for Qdrant
             points = [
                 models.PointStruct(
                     id=doc_id,
@@ -198,20 +182,23 @@ class CustomRAGTool(Toolkit):
                     payload={
                         "text": doc_text,
                         "filename": doc_name,
-                        "company": map_company_name(doc_name.replace(".pdf", "").split("_")[0], company_mapping),
+                        "company": company,  # Dùng company tương ứng với chunk
                         "year": year,
                         "report_type": report_type,
                         "keywords": ["revenue", "profit", "financial", "annual"],
                         "chunk_id": doc_id
                     }
                 )
-                for doc_id, embedding, doc_text, doc_name, year in zip(
+                for doc_id, embedding, doc_text, doc_name, year, company in zip(
                     doc_ids, embeddings, documents, doc_names,
-                    [int(re.search(r"\b(202[0-5])\b", doc_text).group(1)) if re.search(r"\b(202[0-5])\b", doc_text) else 2024 for doc_text in documents]
+                    [int(re.search(r"\b(202[0-5])\b", doc_text).group(1)) if re.search(r"\b(202[0-5])\b", doc_text) else 2024 for doc_text in documents],
+                    companies  # Dùng companies list để gán company
                 )
             ]
 
-            # Upsert to Qdrant in batches
+            for point in points[:5]:
+                logger.debug(f"Upserting point: id={point.id}, company={point.payload['company']}, filename={point.payload['filename']}")
+
             try:
                 for i in range(0, len(points), BATCH_SIZE):
                     batch = points[i:i + BATCH_SIZE]
@@ -228,29 +215,27 @@ class CustomRAGTool(Toolkit):
         except Exception as e:
             logger.error(f"Unexpected error in _load_documents: {str(e)}")
             raise
-    
+
     def run(self, query: str, company: str = None, description: str = None) -> str:
-        """Retrieve and summarize information from financial PDFs using Qdrant."""
+        """Retrieve top 5 closest documents from Qdrant based on cosine similarity."""
         try:
             logger.info(f"Executing RAG query: {query}")
-            # Kiểm tra Qdrant connection
             self.client.get_collections()
-            
-            # Tạo ánh xạ công ty từ thư mục PDF
             company_mapping = build_company_mapping()
-            
-            # Phân tích sub-query nếu không có company/description được truyền vào
+
             if not company and " for " in query:
                 company_part = query.split(" for ")[-1]
-                company = company_part.split()[0] if company_part else None
+                company = company_part.strip()
                 if " in " in company_part:
                     company = company_part.split(" in ")[0].strip()
                 elif " with " in company_part:
                     company = company_part.split(" with ")[0].strip()
-            
-            # Ánh xạ tên công ty
+
             if company:
                 company = map_company_name(company, company_mapping)
+                if not company:
+                    logger.warning(f"Failed to map company: {company}")
+                    company = company_part.strip()
                 logger.debug(f"Mapped company for search: {company}")
 
             year = None
@@ -259,15 +244,12 @@ class CustomRAGTool(Toolkit):
 
             if not description and " with " in query:
                 description = query.split(" with ")[1].split(" in ")[0].strip() if " in " in query else query.split(" with ")[1].strip()
-            elif description == "report":  # Xử lý intent 'báo cáo', 'tài chính'
-                description = None  # Bỏ description mặc định để tránh lọc quá nghiêm ngặt
+            elif description == "report":
+                description = None
 
             logger.debug(f"Query: {query}, company: {company}, description: {description}, year: {year}")
-            
-            # Tạo embedding cho truy vấn
             query_embedding = self.model.encode(query).tolist()
-            
-            # Kiểm tra tất cả công ty trong Qdrant để debug
+
             all_companies_check = self.client.scroll(
                 collection_name=self.collection_name,
                 limit=100
@@ -275,7 +257,6 @@ class CustomRAGTool(Toolkit):
             qdrant_companies = list(set([hit.payload.get("company", "") for hit in all_companies_check[0]]))
             logger.debug(f"Companies in Qdrant: {qdrant_companies}")
 
-            # Kiểm tra xem công ty có trong Qdrant không
             if company:
                 company_check = self.client.scroll(
                     collection_name=self.collection_name,
@@ -286,7 +267,7 @@ class CustomRAGTool(Toolkit):
                 )
                 if not company_check[0]:
                     logger.warning(f"No documents found for company: {company}")
-                    suggestion = f"Try full company name (e.g., 'Apple Inc.') or check if '{company}.pdf' exists in {RAG_DATA_DIR}. "
+                    suggestion = f"Try full company name (e.g., 'Boeing Co.') or check if '{company}.pdf' exists in {RAG_DATA_DIR}. "
                     suggestion += f"Ensure documents are indexed by running _load_documents. Current companies in Qdrant: {', '.join(qdrant_companies)}"
                     return json.dumps({
                         "status": "success",
@@ -294,20 +275,17 @@ class CustomRAGTool(Toolkit):
                         "data": {
                             "sources": [],
                             "documents": {},
-                            "metadata": [],
-                            "summary": "",
                             "suggestion": suggestion
                         },
                         "source": "rag"
                     }, ensure_ascii=False)
 
-            # Tìm kiếm với filter
             filter_conditions = []
             if company:
-                company_variants = [company, normalize_company_name(company)]
+                company_variants = [company]
                 if company in company_mapping.values():
                     company_variants.append(company_mapping.get(normalize_company_name(company), company))
-                company_variants.extend([f"{company} Inc.", f"{company} Corporation"])
+                company_variants.extend([f"{company} Inc.", f"{company} Corporation", f"{company} Co.", f"The {company}"])
                 company_variants = list(set(company_variants))
                 logger.debug(f"Company variants for search: {company_variants}")
                 
@@ -330,7 +308,6 @@ class CustomRAGTool(Toolkit):
                     )
                 )
 
-            # Tìm kiếm trong Qdrant
             search_result = self.client.search(
                 collection_name=self.collection_name,
                 query_vector=query_embedding,
@@ -338,7 +315,6 @@ class CustomRAGTool(Toolkit):
                 limit=5
             )
 
-            # Lọc thêm dựa trên description nếu có
             filtered_results = search_result
             if description:
                 description_embedding = self.model.encode(description).tolist()
@@ -346,27 +322,19 @@ class CustomRAGTool(Toolkit):
                 for hit in search_result:
                     text_embedding = self.model.encode(hit.payload["text"]).tolist()
                     similarity = cosine_similarity([description_embedding], [text_embedding])[0][0]
-                    if similarity > 0.7:  # Ngưỡng tương đồng
+                    if similarity > 0.7:
                         filtered_results.append(hit)
+                    logger.debug(f"Similarity for {hit.payload['filename']}: {similarity}")
 
             logger.debug(f"Found {len(search_result)} results before filtering, {len(filtered_results)} after filtering")
-
-            # Giới hạn lại số kết quả sau lọc
             filtered_results = filtered_results[:3]
 
-            # Trích xuất nội dung và metadata
             sources = [hit.payload["filename"] for hit in filtered_results]
             documents = {hit.payload["filename"]: hit.payload["text"] for hit in filtered_results}
-            metadata = [
-                {
-                    "filename": hit.payload["filename"],
-                    "company": hit.payload["company"],
-                    "year": hit.payload["year"],
-                    "report_type": hit.payload["report_type"]
-                } for hit in filtered_results
-            ]
-            summary = " ".join([hit.payload["text"][:200] for hit in filtered_results])
-            
+
+            for hit in filtered_results:
+                logger.debug(f"Hit payload: {hit.payload}")
+
             if not filtered_results:
                 logger.warning(f"No relevant documents found for query: {query}")
                 response_data = {
@@ -375,8 +343,6 @@ class CustomRAGTool(Toolkit):
                     "data": {
                         "sources": [],
                         "documents": {},
-                        "metadata": [],
-                        "summary": "",
                         "suggestion": f"Try broader keywords or check if documents are indexed in {RAG_DATA_DIR}. Ensure '{company}.pdf' is processed by _load_documents. Current companies in Qdrant: {', '.join(qdrant_companies)}"
                     },
                     "source": "rag"
@@ -384,15 +350,13 @@ class CustomRAGTool(Toolkit):
                 if company:
                     response_data["data"]["suggestion"] += f" Searched variants: {', '.join(company_variants)}"
                 return json.dumps(response_data, ensure_ascii=False)
-            
+
             return json.dumps({
                 "status": "success",
                 "message": "RAG query executed successfully",
                 "data": {
                     "sources": sources,
-                    "documents": documents,
-                    "metadata": metadata,
-                    "summary": summary
+                    "documents": documents
                 },
                 "source": "rag"
             }, ensure_ascii=False)
