@@ -49,40 +49,58 @@ def create_rag_agent() -> Agent:
         description="RAG Agent: Summarizes financial reports or documents using Qdrant vector search.",
         instructions=[
             f"""
-            **Objective**: Generate RAG query from sub-query using TOOLS_CONFIG['rag_agent']. Do NOT execute query.
+            **Objective**: Create RAG query from sub-query, return structured output only. Do not execute query.
 
-            **TOOLS_CONFIG**:
-            {json.dumps({"rag_agent": TOOLS_CONFIG["rag_agent"]}, ensure_ascii=False, indent=2)}
+            **TOOLS_CONFIG**: {json.dumps({"rag_agent": TOOLS_CONFIG["rag_agent"]}, ensure_ascii=False, indent=2)}
 
-            **Company Mapping** (from PDF filenames):
-            {json.dumps(company_mapping, ensure_ascii=False, indent=2)}
+            **Keywords**: revenue, profit, business strategy, trend, business performance, financial metrics, financial report
 
-            **Output**: JSON object:
+            **Output**:
             {{
               "status": "success" | "error",
               "message": "RAG query generated successfully" | "Invalid sub-query" | "Company not found",
               "data": {{
                 "rag_query": "sub-query",
                 "company": "company name",
-                "description": "additional keyword",
+                "description": "keyword or null",
                 "result": [],
-                "suggestion": "optional suggestion if company not found"
+                "suggestion": "suggestion or null"
               }}
             }} or {{}}
 
             **Rules**:
-            - Match sub-query to {TOOLS_CONFIG['rag_agent']['intents']}. 
-            - Map intents: 'báo cáo', 'tài chính' to 'report'; 'mô tả' to 'description'.
-            - Set 'rag_query' to the sub-query as-is (e.g., 'Summarize report for Apple with business strategy in 2024').
-            - Extract 'company' from sub-query (e.g., 'Apple' from 'Summarize report for Apple with business strategy').
-            - Use Company Mapping to convert extracted company to full name (e.g., 'apple' → 'Apple').
-            - Extract 'description' from sub-query if it contains additional keywords (e.g., 'business strategy' from 'with business strategy').
-            - Invalid sub-query: return {{}}.
-            - If company not in Company Mapping, set 'company' to extracted name, set 'message' to 'Company not found', and add 'suggestion' (e.g., 'Try full name like Apple Inc. or check PDF filenames').
+            - Match sub-query to intents: {TOOLS_CONFIG['rag_agent']['intents']}.
+            - Map intents: 'báo cáo', 'tài chính', 'report', 'annual report' → 'financial report'.
+            - Extract 'company' from sub-query (e.g., 'Apple' from 'Summarize report for Apple').
+            - Map company to full name via Python (e.g., 'apple' → 'Apple').
+            - Extract keywords (e.g., 'doanh thu' → 'revenue') from Keywords list.
+            - Generate 'rag_query':
+              - No keywords: 'Summarize financial report for {{company}}'
+              - With keywords: 'Summarize financial report for {{company}} focusing on {{description}}'
+              - With year (e.g., 'in 2024'): Append ' in {{year}}'
+            - Set 'description' to keyword (e.g., 'revenue') or null.
+            - Invalid sub-query: Return {{}}.
+            - Unmapped company: Set 'company' to raw name, 'message' to 'Company not found', 'suggestion' to 'Try full name like Apple Inc.'.
+
+            **Example**:
+            Input: 'Summarize report for Apple with doanh thu'
+            Output:
+            {{
+              "status": "success",
+              "message": "RAG query generated successfully",
+              "data": {{
+                "rag_query": "Summarize financial report for Apple focusing on revenue",
+                "company": "Apple",
+                "description": "revenue",
+                "result": [],
+                "suggestion": null
+              }}
+            }}
 
             **Constraints**:
-            - Return ONLY JSON object: {{...}} or {{}}.
-            - NO markdown, code fences, code, text, or explanations.
+            - Return ONLY the specified structure: {{...}} or {{}}.
+            - Do NOT wrap the output in markdown code blocks (e.g., ```json ... ```).
+            - NO markdown, code fences, code, text, or explanations outside the specified structure.
             - Strictly follow Rules and Output format.
             """
         ],

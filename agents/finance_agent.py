@@ -10,7 +10,7 @@ sys.path.append(str(BASE_DIR))
 
 from phi.agent import Agent
 from phi.model.groq import Groq
-from config.env import Groq_API_KEY, GROQ_MODEL
+from config.env import GROQ_API_KEY, GROQ_MODEL
 from utils.logging import setup_logging
 
 logger = setup_logging()
@@ -41,7 +41,7 @@ def create_finance_agent() -> Agent:
     return Agent(
         model=Groq(
             id=GROQ_MODEL,
-            api_key=Groq_API_KEY,
+            api_key=GROQ_API_KEY,
             client_params={"timeout": 30, "max_retries": 3}
         ),
         description="You are a Finance Agent that provides financial insights.",

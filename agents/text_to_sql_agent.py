@@ -73,7 +73,14 @@ The database schema is not provided. Infer the appropriate tables and columns fr
 schema = load_metadata()
 TOOLS_CONFIG = {
     "text2sql_agent": {
-        "intents": ["giá", "cổ phiếu", "stock", "mô tả", "description"],
+        "intents": [
+            "giá", "cổ phiếu", "stock", "mô tả", "description",
+            "market cap", "pe ratio", "dividend yield", "52 week high", "52 week low",
+            "volume", "dividends", "stock splits",
+            "sector", "industry", "country",
+            "highest price", "lowest price", "average price", "total volume", "average volume",
+            "time series", "histogram", "boxplot", "scatter plot", "bar chart", "pie chart", "heatmap"
+        ],
         "sub_query_template": "Retrieve {intent} data for {company}",
         "description": "Queries database for stock prices or company info"
     },
@@ -90,8 +97,8 @@ TOOLS_CONFIG = {
 }
 
 def create_text_to_sql_agent() -> Agent:
-    """Tạo TextToSQL Agent để tạo câu SQL dựa trên schema."""
-    logger.info("Creating TextToSQL Agent")
+    """Tạo Text2SQL Agent để tạo câu SQL dựa trên schema."""
+    logger.info("Creating Text2SQL Agent")
 
     return Agent(
         model=Groq(
@@ -102,38 +109,50 @@ def create_text_to_sql_agent() -> Agent:
         description="Text2SQL Agent: sinh câu SQL từ sub-query, chỉ tạo không thực thi.",
         instructions=[
             f"""
+            **Constraints** (Read this first):
+            - Return ONLY the specified JSON structure: {{"status": "success" | "error", "message": "SQL query generated successfully" | "Invalid sub-query", "data": {{"tables": ["table_name", ...], "sql_query": "SQL query", "result": []}}}} or {{}}.
+            - Output must be compact with NO extra spaces, line breaks, or formatting outside the structure (e.g., no pretty printing).
+            - Do NOT wrap the output in markdown code blocks (e.g., ```json ... ```).
+            - Absolutely NO markdown, code fences, code, text, or explanations outside the specified structure (e.g., do NOT include "Input", "Visualization metadata", etc.).
+            - Strictly follow the output format.
+
             **Schema**: {schema}
 
-            **Objective**: Generate SQL query from sub-query using TOOLS_CONFIG['text2sql_agent']. Do NOT execute SQL.
+            **Objective**: Generate SQL query from sub-query using TOOLS_CONFIG['text2sql_agent'], ensuring data structure matches the required columns for visualization. Do NOT execute SQL.
 
             **TOOLS_CONFIG**:
             {json.dumps({"text2sql_agent": TOOLS_CONFIG["text2sql_agent"]}, ensure_ascii=False, indent=2)}
 
-            **Output**: JSON array:
-            {{
-            "status": "success" | "error",
-            "message": "SQL query generated successfully" | "Invalid sub-query",
-            "data": {{
-                "tables": ["table_name", ...],
-                "sql_query": "SQL query",
-                "result": []
-                }}
-            }} or {{}}
+            **Input**:
+            - Sub-query (e.g., 'Retrieve stock price data for Nike and Boeing on 2024-08-01').
+            - Visualization metadata from Orchestrator (e.g., {{"type": "table", "required_columns": ["name", "close_price"]}}).
+
+            **Output**:
+            {{"status": "success" | "error", "message": "SQL query generated successfully" | "Invalid sub-query", "data": {{"tables": ["table_name", ...], "sql_query": "SQL query", "result": []}}}} or {{}}
 
             **Rules**:
             - Use schema tables/columns only.
-            - Map intents: 'giá', 'cổ phiếu' to 'stock price'; 'mô tả' to 'description'.
-            - Stock prices ('stock price'): JOIN companies, stock_prices on symbol, SELECT c.name, sp.close_price, LIKE '%company%'.
-            - Latest price: ORDER BY sp.date DESC LIMIT 1.
-            - Specific date (e.g., 'on YYYY-MM-DD'): Add WHERE sp.date = 'YYYY-MM-DD'.
-            - Yearly summary (e.g., 'in YYYY'): Add EXTRACT(YEAR FROM sp.date)=year.
-            - Description ('description'): SELECT c.name, c.description, no join, LIKE '%company%'.
-            - Invalid sub-query or no SQL: return [].
+            - Map intents: 'giá', 'cổ phiếu', 'stock' → 'stock price'; 'mô tả', 'description' → 'description'; and others as specified in TOOLS_CONFIG.
+            - Determine if {{company}} is a stock ticker symbol or company name:
+              - If {{company}} is short (less than 5 characters) and all uppercase (e.g., 'MSFT'), search in 'symbol' column with exact match (e.g., c.symbol = '{{company}}').
+              - Otherwise, search in 'name' column with partial match (e.g., c.name ILIKE '%{{company}}%').
+            - For queries involving stock data (stock price, volume, dividends, etc.):
+              - JOIN companies, stock_prices on symbol.
+              - SELECT columns from visualization.required_columns.
+              - Add WHERE conditions based on sub-query (e.g., sp.date = 'YYYY-MM-DD' for specific date, sp.date BETWEEN 'YYYY-MM-DD' AND 'YYYY-MM-DD' for time range).
+              - For 'most recent', add ORDER BY sp.date DESC LIMIT 1.
+            - For descriptive queries (description, sector, etc.):
+              - No join, SELECT from companies table only.
+            - For visualization types:
+              - Adjust SELECT based on visualization.required_columns (e.g., for 'time series', SELECT sp.date, sp.close_price ORDER BY sp.date).
+            - Invalid sub-query: return {{}}.
+            - Format sql_query as a single-line string without line breaks.
 
-            **Constraints**:
-            - Return ONLY JSON array: {{...}} or {{}}.
-            - NO markdown, code fences, code, text, or explanations.
-            - Strictly follow Rules and Output format.
+            **Example**:
+            Input: 'Retrieve stock price data for MSFT on 2024-03-15'
+            Visualization metadata: {{"type": "table", "required_columns": ["name", "close_price"]}}
+            Output:
+            {{"status": "success", "message": "SQL query generated successfully", "data": {{"tables": ["companies", "stock_prices"], "sql_query": "SELECT c.name, sp.close_price FROM companies c JOIN stock_prices sp ON c.symbol = sp.symbol WHERE c.symbol = 'MSFT' AND sp.date = '2024-03-15'", "result": []}}}}
             """
         ],
         debug_mode=True
