@@ -1,4 +1,3 @@
-# orchestrator_flow.py
 import json
 from phi.agent import Agent, RunResponse
 from utils.logging import setup_logging, get_collected_logs
@@ -81,6 +80,24 @@ def limit_sql_records(sql_response: str, max_records: int = 5) -> str:
         logger.error(f"Error limiting SQL records: {str(e)}")
         return sql_response
 
+def limit_records(data: list, max_records: int = 5, for_dashboard: bool = False) -> list:
+    """Giới hạn số record trong danh sách dữ liệu, chỉ áp dụng cho log Chat Completion, không giới hạn cho dashboard."""
+    if not isinstance(data, list):
+        logger.error(f"Expected list for limiting records, got {type(data)}")
+        return []
+    if for_dashboard:
+        # Không giới hạn dữ liệu cho dashboard, nhưng có thể đặt max an toàn nếu cần
+        max_dashboard_records = 1000
+        if len(data) > max_dashboard_records:
+            logger.info(f"Limiting {len(data)} dashboard records to {max_dashboard_records}")
+            return data[:max_dashboard_records]
+        return data
+    # Giới hạn cho log Chat Completion
+    if len(data) <= max_records:
+        return data
+    logger.info(f"Limiting {len(data)} records to {max_records} for Chat Completion log")
+    return data[:max_records]
+
 def orchestrator_flow(query: str, orchestrator: Agent, sql_agent, sql_tool, rag_agent, rag_tool, chat_completion_agent) -> dict:
     """Xử lý flow của Agent Team: phân việc, gọi agent con, và tổng hợp kết quả."""
     try:
@@ -119,18 +136,24 @@ def orchestrator_flow(query: str, orchestrator: Agent, sql_agent, sql_tool, rag_
                 response_for_chat = final_response["response_for_chat"]
                 actual_result = final_response["actual_result"]
                 sql_response = limit_sql_records(response_for_chat, max_records=5)
-                logger.info(f"SQL Response (limited): {sql_response}")
-                actual_results.append(actual_result)
+                # Giữ full actual_result cho dashboard
+                dashboard_result = limit_records(actual_result, for_dashboard=True)
+                # Giới hạn actual_result cho log Chat Completion
+                limited_result = limit_records(actual_result, max_records=5, for_dashboard=False)
+                logger.info(f"SQL Response (limited for log): {sql_response}")
+                logger.info(f"Dashboard records: {len(dashboard_result)}, Limited log records: {len(limited_result)}")
+                actual_results.append(dashboard_result)
             elif agent_name == "rag_agent":
                 final_response = rag_flow(sub_query, rag_agent, rag_tool)
-                rag_response = limit_lines(final_response, max_lines=5)
+                rag_response = limit_lines(final_response, max_lines=10)
                 logger.info(f"RAG Response: {rag_response}")
 
         # Kiểm tra actual_results để quyết định Dashboard
         dashboard_enabled = data.get("Dashboard", False) and bool(actual_results and actual_results[0])  # Chỉ bật nếu có dữ liệu
         dashboard_info = {
-            "Dashboard": dashboard_enabled,
-            "visualization": data.get("visualization", {"type": "none"})
+            "enabled": dashboard_enabled,
+            "data": actual_results[0] if actual_results else [],
+            "visualization": data.get("visualization", {"type": "none", "required_columns": [], "aggregation": None})
         }
         chat_input = (
             f"RAG response: {rag_response}\n"
@@ -151,11 +174,7 @@ def orchestrator_flow(query: str, orchestrator: Agent, sql_agent, sql_tool, rag_
             "message": chat_response if isinstance(chat_response, str) else "Không có câu trả lời.",
             "data": {
                 "result": chat_response if isinstance(chat_response, str) else "Không có câu trả lời.",
-                "dashboard": {
-                    "enabled": dashboard_enabled,
-                    "data": actual_results[0] if actual_results else [],
-                    "visualization": data.get("visualization", {"type": "none"})
-                }
+                "dashboard": dashboard_info
             },
             "logs": get_collected_logs()
         }
