@@ -7,9 +7,15 @@ from utils.logging import setup_logging
 
 logger = setup_logging()
 
+class Visualization(BaseModel):
+    type: str  # Loại biểu đồ: table, time series, histogram, boxplot, scatter, bar, pie, heatmap
+    required_columns: List[str]
+
 class OrchestratorData(BaseModel):
     agents: List[str]
     sub_queries: Dict[str, str]
+    Dashboard: bool
+    visualization: Optional[Visualization] = None  # Làm cho visualization trở thành optional
     general_response: Optional[str] = None
 
 class OrchestratorResponse(BaseModel):

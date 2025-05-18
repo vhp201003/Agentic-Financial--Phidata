@@ -1,3 +1,4 @@
+# rag_agent.py
 import os
 import sys
 from pathlib import Path
@@ -28,7 +29,15 @@ TOOLS_CONFIG = {
         "description": "Analyzes financial trends or insights"
     },
     "rag_agent": {
-        "intents": ["báo cáo", "annual report", "tài chính", "report"],
+        "intents": [
+            "báo cáo", "tài chính", "doanh thu", "lợi nhuận", "chi phí", "tài sản", "nợ", "vốn", "cổ phần",
+            "doanh nghiệp", "kinh doanh", "chiến lược", "kết quả hoạt động", "tăng trưởng",
+            "bao cao", "tai chinh", "doanh thu", "loi nhuan", "chi phi", "tai san", "no", "von", "co phan",
+            "doanh nghiep", "kinh doanh", "chien luoc", "ket qua hoat dong", "tang truong",
+            "report", "annual report", "financial statement", "balance sheet", "income statement", "cash flow",
+            "revenue", "profit", "expense", "assets", "liabilities", "equity", "shares",
+            "business", "strategy", "performance", "growth"
+        ],
         "sub_query_template": "Summarize {intent} for {company}",
         "description": "Summarizes financial reports or documents"
     }
@@ -37,72 +46,43 @@ TOOLS_CONFIG = {
 def create_rag_agent() -> Agent:
     """Tạo RAG Agent để xử lý truy vấn RAG với Qdrant."""
     logger.info("Creating RAG Agent")
-    # Tạo ánh xạ công ty từ thư mục PDF
     company_mapping = build_company_mapping()
     
+    tools_config_json = json.dumps({"rag_agent": TOOLS_CONFIG["rag_agent"]}, ensure_ascii=False, indent=2)
+    system_prompt = f"""
+You are RAG Agent, an intelligent assistant specializing in summarizing financial reports or documents using Qdrant vector search. Your role is to summarize provided document content based on the sub-query and return a plain text summary. Follow these steps using chain-of-thought reasoning:
+
+1. Analyze the sub-query:
+   - Match sub-query to intents in TOOLS_CONFIG['rag_agent']:
+     {tools_config_json}
+   - Intents include: 'báo cáo', 'tài chính', 'doanh thu', 'lợi nhuận', 'report', 'annual report', 'bao cao', 'tai chinh', 'revenue', 'profit', etc.
+   - Map intents: 'báo cáo', 'tài chính', 'report', 'annual report', 'bao cao', 'tai chinh', 'financial statement', 'balance sheet', 'income statement', 'cash flow' to 'financial report'.
+   - Extract 'company' from sub-query (e.g., 'Apple' from 'Summarize report for Apple').
+   - Map company to full name using company mapping (e.g., 'apple' to 'Apple').
+   - Extract keywords (e.g., 'doanh thu' to 'revenue') from: revenue, profit, expense, assets, liabilities, equity, shares, business, strategy, performance, growth, financial report.
+   - Handle multiple keywords (e.g., 'with revenue and business strategy' maps to 'revenue, business strategy').
+
+2. Summarize document content:
+   - If sub-query contains keywords (e.g., 'doanh thu'), focus on those aspects in the summary.
+   - Include company name in the summary (e.g., 'Apple đạt doanh thu...').
+   - If document content is empty or irrelevant, return: Không tìm thấy thông tin liên quan đến báo cáo tài chính của công ty trong tài liệu cung cấp.
+
+3. Format the output:
+   - Return ONLY plain text, no JSON, no markdown code blocks, no additional formatting.
+   - Example: Theo báo cáo tài chính, Apple đạt doanh thu 61,110 triệu USD trong năm 2024, tăng 3% so với năm trước.
+   - If no relevant content: Không tìm thấy thông tin liên quan đến báo cáo tài chính của công ty trong tài liệu cung cấp.
+
+4. Error handling:
+   - If sub-query is invalid or cannot be processed, return: Không tìm thấy thông tin liên quan đến báo cáo tài chính của công ty trong tài liệu cung cấp.
+
+Do not include any text, explanations, markdown, or code outside the plain text summary.
+"""
     return Agent(
         model=Groq(
             id=GROQ_MODEL,
             api_key=GROQ_API_KEY,
             client_params={"timeout": 30, "max_retries": 3}
         ),
-        description="RAG Agent: Summarizes financial reports or documents using Qdrant vector search.",
-        instructions=[
-            f"""
-            **Objective**: Create RAG query from sub-query, return structured output only. Do not execute query.
-
-            **TOOLS_CONFIG**: {json.dumps({"rag_agent": TOOLS_CONFIG["rag_agent"]}, ensure_ascii=False, indent=2)}
-
-            **Keywords**: revenue, profit, business strategy, trend, business performance, financial metrics, financial report
-
-            **Output**:
-            {{
-              "status": "success" | "error",
-              "message": "RAG query generated successfully" | "Invalid sub-query" | "Company not found",
-              "data": {{
-                "rag_query": "sub-query",
-                "company": "company name",
-                "description": "keyword or null",
-                "result": [],
-                "suggestion": "suggestion or null"
-              }}
-            }} or {{}}
-
-            **Rules**:
-            - Match sub-query to intents: {TOOLS_CONFIG['rag_agent']['intents']}.
-            - Map intents: 'báo cáo', 'tài chính', 'report', 'annual report' → 'financial report'.
-            - Extract 'company' from sub-query (e.g., 'Apple' from 'Summarize report for Apple').
-            - Map company to full name via Python (e.g., 'apple' → 'Apple').
-            - Extract keywords (e.g., 'doanh thu' → 'revenue') from Keywords list.
-            - Generate 'rag_query':
-              - No keywords: 'Summarize financial report for {{company}}'
-              - With keywords: 'Summarize financial report for {{company}} focusing on {{description}}'
-              - With year (e.g., 'in 2024'): Append ' in {{year}}'
-            - Set 'description' to keyword (e.g., 'revenue') or null.
-            - Invalid sub-query: Return {{}}.
-            - Unmapped company: Set 'company' to raw name, 'message' to 'Company not found', 'suggestion' to 'Try full name like Apple Inc.'.
-
-            **Example**:
-            Input: 'Summarize report for Apple with doanh thu'
-            Output:
-            {{
-              "status": "success",
-              "message": "RAG query generated successfully",
-              "data": {{
-                "rag_query": "Summarize financial report for Apple focusing on revenue",
-                "company": "Apple",
-                "description": "revenue",
-                "result": [],
-                "suggestion": null
-              }}
-            }}
-
-            **Constraints**:
-            - Return ONLY the specified structure: {{...}} or {{}}.
-            - Do NOT wrap the output in markdown code blocks (e.g., ```json ... ```).
-            - NO markdown, code fences, code, text, or explanations outside the specified structure.
-            - Strictly follow Rules and Output format.
-            """
-        ],
-        debug_mode=True
+        system_prompt=system_prompt,
+        # debug_mode=True
     )

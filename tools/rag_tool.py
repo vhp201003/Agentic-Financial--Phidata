@@ -13,7 +13,6 @@ from config.env import QDRANT_HOST, QDRANT_PORT, RAG_DATA_DIR
 from utils.logging import setup_logging
 from utils.validators import validate_rag_dir
 from utils.company_mapping import build_company_mapping, map_company_name, normalize_company_name
-import json
 from sklearn.metrics.pairwise import cosine_similarity
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -217,7 +216,7 @@ class CustomRAGTool(Toolkit):
             raise
 
     def run(self, query: str, company: str = None, description: str = None) -> str:
-        """Retrieve top 5 closest documents from Qdrant based on cosine similarity."""
+        """Retrieve top 5 closest documents from Qdrant based on cosine similarity and return their content as plain text."""
         try:
             logger.info(f"Executing RAG query: {query}")
             self.client.get_collections()
@@ -267,18 +266,7 @@ class CustomRAGTool(Toolkit):
                 )
                 if not company_check[0]:
                     logger.warning(f"No documents found for company: {company}")
-                    suggestion = f"Try full company name (e.g., 'Boeing Co.') or check if '{company}.pdf' exists in {RAG_DATA_DIR}. "
-                    suggestion += f"Ensure documents are indexed by running _load_documents. Current companies in Qdrant: {', '.join(qdrant_companies)}"
-                    return json.dumps({
-                        "status": "success",
-                        "message": f"No documents found for company: {company}",
-                        "data": {
-                            "sources": [],
-                            "documents": {},
-                            "suggestion": suggestion
-                        },
-                        "source": "rag"
-                    }, ensure_ascii=False)
+                    return f"Không tìm thấy tài liệu liên quan đến {company} trong hệ thống. Đảm bảo tài liệu '{company}.pdf' đã được tải lên và xử lý."
 
             filter_conditions = []
             if company:
@@ -329,42 +317,14 @@ class CustomRAGTool(Toolkit):
             logger.debug(f"Found {len(search_result)} results before filtering, {len(filtered_results)} after filtering")
             filtered_results = filtered_results[:3]
 
-            sources = [hit.payload["filename"] for hit in filtered_results]
-            documents = {hit.payload["filename"]: hit.payload["text"] for hit in filtered_results}
-
-            for hit in filtered_results:
-                logger.debug(f"Hit payload: {hit.payload}")
-
             if not filtered_results:
                 logger.warning(f"No relevant documents found for query: {query}")
-                response_data = {
-                    "status": "success",
-                    "message": "No relevant documents found",
-                    "data": {
-                        "sources": [],
-                        "documents": {},
-                        "suggestion": f"Try broader keywords or check if documents are indexed in {RAG_DATA_DIR}. Ensure '{company}.pdf' is processed by _load_documents. Current companies in Qdrant: {', '.join(qdrant_companies)}"
-                    },
-                    "source": "rag"
-                }
-                if company:
-                    response_data["data"]["suggestion"] += f" Searched variants: {', '.join(company_variants)}"
-                return json.dumps(response_data, ensure_ascii=False)
+                return f"Không tìm thấy tài liệu liên quan đến {query} trong hệ thống."
 
-            return json.dumps({
-                "status": "success",
-                "message": "RAG query executed successfully",
-                "data": {
-                    "sources": sources,
-                    "documents": documents
-                },
-                "source": "rag"
-            }, ensure_ascii=False)
+            # Trả về nội dung tài liệu dưới dạng text
+            document_texts = [hit.payload["text"] for hit in filtered_results]
+            return "\n\n".join(document_texts)
+
         except Exception as e:
             logger.error(f"Error executing RAG query: {str(e)}")
-            return json.dumps({
-                "status": "error",
-                "message": f"Error executing RAG query: {str(e)}",
-                "data": None,
-                "source": "rag"
-            }, ensure_ascii=False)
+            return f"Lỗi khi truy xuất tài liệu: {str(e)}"

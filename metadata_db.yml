@@ -10,6 +10,33 @@ tables:
     - name: name
       type: VARCHAR(255)
       description: Full name of the company (e.g., 'Apple Inc.')
+    - name: sector
+      type: VARCHAR(100)
+      description: Industry sector (e.g., 'Technology')
+    - name: industry
+      type: VARCHAR(100)
+      description: Specific industry (e.g., 'Consumer Electronics')
+    - name: country
+      type: VARCHAR(100)
+      description: Country where company is headquartered (e.g., 'USA')
+    - name: website
+      type: VARCHAR(255)
+      description: Company website URL (e.g., 'https://www.apple.com')
+    - name: market_cap
+      type: DECIMAL(15,2)
+      description: Market capitalization in USD
+    - name: pe_ratio
+      type: DECIMAL(10,2)
+      description: Price-to-earnings ratio
+    - name: dividend_yield
+      type: DECIMAL(5,2)
+      description: Dividend yield percentage
+    - name: week_high_52
+      type: DECIMAL(10,2)
+      description: 52-week high stock price
+    - name: week_low_52
+      type: DECIMAL(10,2)
+      description: 52-week low stock price
     - name: description
       type: TEXT
       description: Detailed company description
@@ -30,6 +57,7 @@ tables:
     - name: close_price
       type: DECIMAL(10,2)
       description: Closing price for the day
+
 relationships:
 - name: companies_to_stock_prices
   type: one-to-many

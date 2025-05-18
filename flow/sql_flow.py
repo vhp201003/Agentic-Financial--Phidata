@@ -18,33 +18,16 @@ def sql_flow(sub_query: str, sql_agent, sql_tool) -> dict:
         
         logger.debug(f"Raw SQL response from sql_agent: {sql_response}")
 
-        # Loại bỏ markdown code fences
-        sql_response = re.sub(r'```(?:json|python|sql)?\n|\n```', '', sql_response).strip()
+        # Kiểm tra nếu sql_response là một thông báo lỗi
+        if sql_response.startswith("Không tạo được câu SQL"):
+            logger.error(f"Failed to generate SQL query: {sql_response}")
+            return {
+                "response_for_chat": sql_response,
+                "actual_result": []
+            }
         
-        # Parse JSON response
-        try:
-            sql_response_dict = json.loads(sql_response)
-            logger.info(f"Parsed SQL response: {json.dumps(sql_response_dict, ensure_ascii=False)}")
-        except json.JSONDecodeError:
-            logger.error(f"SQL response is not valid JSON: {sql_response}")
-            return standardize_response("error", "Phản hồi SQL không phải JSON hợp lệ", {})
-        
-        # Kiểm tra cấu trúc JSON
-        if not isinstance(sql_response_dict, dict) or "status" not in sql_response_dict:
-            logger.error(f"Invalid SQL response structure: {sql_response_dict}")
-            return standardize_response("error", "Cấu trúc phản hồi SQL không hợp lệ", {})
-        
-        if sql_response_dict["status"] != "success":
-            logger.warning(f"sql_agent failed: {sql_response_dict.get('message', 'Unknown error')}")
-            return sql_response_dict
-        
-        # Lấy sql_query
-        sql_query = sql_response_dict["data"].get("sql_query", "")
-        if not sql_query:
-            logger.error("No SQL query generated")
-            return standardize_response("error", "Không tạo được SQL query", {})
-        
-        # Thực thi query với sql_tool
+        # sql_response là câu SQL, thực thi query với sql_tool
+        sql_query = sql_response
         logger.info(f"Executing SQL query with sql_tool: {sql_query}")
         try:
             tool_response = sql_tool.run(sql_query)
@@ -53,7 +36,10 @@ def sql_flow(sub_query: str, sql_agent, sql_tool) -> dict:
             logger.info(f"Parsed tool response: {json.dumps(tool_response_dict, ensure_ascii=False)}")
         except Exception as e:
             logger.error(f"Error executing query with sql_tool: {str(e)}")
-            return standardize_response("error", f"Lỗi thực thi query: {str(e)}", {})
+            return {
+                "response_for_chat": f"Lỗi thực thi query: {str(e)}",
+                "actual_result": []
+            }
         
         # Kiểm tra trạng thái dữ liệu
         result_data = tool_response_dict["data"].get("result", [])
@@ -62,23 +48,20 @@ def sql_flow(sub_query: str, sql_agent, sql_tool) -> dict:
         if not result_data:
             logger.warning(f"No data returned for query: {sql_query}")
 
-        # Chuẩn bị response cho Chat Completion Agent (bao gồm result_data)
-        response_for_chat = {
-            "status": sql_response_dict["status"],
-            "message": sql_response_dict["message"],
-            "data": {
-                "tables": sql_response_dict["data"].get("tables", []),
-                "sql_query": sql_query,
-                "result": result_status,  # Trạng thái dữ liệu
-                "result_data": result_data  # Dữ liệu thực tế
-            }
-        }
+        # Chuẩn bị response cho Chat Completion Agent (dạng text)
+        if result_data:
+            response_for_chat = f"Dữ liệu từ cơ sở dữ liệu cho truy vấn '{sub_query}': {json.dumps(result_data, ensure_ascii=False)}"
+        else:
+            response_for_chat = f"Không tìm thấy dữ liệu trong cơ sở dữ liệu cho truy vấn '{sub_query}'."
 
-        # Trả về dữ liệu đầy đủ (bao gồm "result") để sử dụng sau này (e.g., vẽ dashboard)
+        # Trả về dữ liệu đầy đủ (bao gồm result_data để vẽ dashboard)
         return {
             "response_for_chat": response_for_chat,
-            "actual_result": result_data  # Dữ liệu thực tế để dùng cho dashboard
+            "actual_result": result_data
         }
     except Exception as e:
         logger.error(f"Error in sql_flow: {str(e)}")
-        return standardize_response("error", f"Lỗi trong sql_flow: {str(e)}", {})
+        return {
+            "response_for_chat": f"Lỗi trong sql_flow: {str(e)}",
+            "actual_result": []
+        }
