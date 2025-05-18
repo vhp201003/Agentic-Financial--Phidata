@@ -62,14 +62,15 @@ def sql_flow(sub_query: str, sql_agent, sql_tool) -> dict:
         if not result_data:
             logger.warning(f"No data returned for query: {sql_query}")
 
-        # Chuẩn bị response cho Chat Completion Agent (không chứa dữ liệu "result")
+        # Chuẩn bị response cho Chat Completion Agent (bao gồm result_data)
         response_for_chat = {
             "status": sql_response_dict["status"],
             "message": sql_response_dict["message"],
             "data": {
                 "tables": sql_response_dict["data"].get("tables", []),
                 "sql_query": sql_query,
-                "result": result_status  # Chỉ cung cấp trạng thái dữ liệu
+                "result": result_status,  # Trạng thái dữ liệu
+                "result_data": result_data  # Dữ liệu thực tế
             }
         }
 

@@ -1,6 +1,6 @@
 import json
 from phi.agent import Agent, RunResponse
-from utils.logging import setup_logging
+from utils.logging import setup_logging, get_collected_logs
 from utils.response import standardize_response
 from utils.response_parser import parse_response_to_json
 from flow.sql_flow import sql_flow
@@ -34,9 +34,11 @@ def process_response(response: any, context: str) -> dict:
         logger.error(f"[{context}] Error processing response: {str(e)}")
         return standardize_response("error", f"Lỗi xử lý phản hồi {context}: {str(e)}", {})
 
-def orchestrator_flow(query: str, orchestrator: Agent, sql_agent, sql_tool, rag_agent, rag_tool, chat_completion_agent) -> dict:
+def orchestrator_flow(query: str, orchestrator: Agent, sql_agent, sql_tool, rag_agent, rag_tool, chat_completion_agent, thinking_queue=None) -> dict:
     """Xử lý flow của Agent Team: phân việc, gọi agent con, và tổng hợp kết quả."""
     try:
+        if thinking_queue:
+            thinking_queue.put("Đang phân tích truy vấn...")
         # Process orchestrator response
         result = orchestrator.run(query)
         result_dict = process_response(result, "Orchestrator")
@@ -47,13 +49,14 @@ def orchestrator_flow(query: str, orchestrator: Agent, sql_agent, sql_tool, rag_
             return {
                 "status": "error",
                 "message": "Có lỗi xảy ra khi phân tích truy vấn: " + result_dict.get("message", "Không xác định"),
-                "data": {}
+                "data": {},
+                "logs": get_collected_logs()
             }
 
         # Process sub-queries
         data = result_dict.get("data", {})
         responses = []
-        actual_results = []  # Lưu trữ dữ liệu thực tế để vẽ dashboard
+        actual_results = []
         for agent_name in data.get("agents", []):
             sub_query = data.get("sub_queries", {}).get(agent_name)
             if not sub_query:
@@ -61,11 +64,13 @@ def orchestrator_flow(query: str, orchestrator: Agent, sql_agent, sql_tool, rag_
                 return {
                     "status": "error",
                     "message": "Không có truy vấn phụ cho " + agent_name,
-                    "data": {}
+                    "data": {},
+                    "logs": get_collected_logs()
                 }
             if agent_name == "text2sql_agent":
+                if thinking_queue:
+                    thinking_queue.put("Đang gọi Text2SQL Agent...")
                 final_response = sql_flow(sub_query, sql_agent, sql_tool)
-                # final_response giờ chứa cả response_for_chat và actual_result
                 if isinstance(final_response, dict) and "response_for_chat" in final_response:
                     response_for_chat = final_response["response_for_chat"]
                     actual_result = final_response["actual_result"]
@@ -77,44 +82,50 @@ def orchestrator_flow(query: str, orchestrator: Agent, sql_agent, sql_tool, rag_
                     final_response_dict = process_response(final_response, "Text2SQL Agent")
                     responses.append(final_response_dict)
             elif agent_name == "rag_agent":
+                if thinking_queue:
+                    thinking_queue.put("Đang gọi RAG Agent...")
                 final_response = rag_flow(sub_query, rag_agent, rag_tool)
                 final_response_dict = process_response(final_response, "RAG Agent")
                 logger.info(f"RAG Response: {json.dumps(final_response_dict, indent=2, ensure_ascii=False)}")
                 responses.append(final_response_dict)
 
-        # Gửi responses và metadata từ Orchestrator đến Chat Completion Agent
+        # Gửi responses và metadata đến Chat Completion Agent
         if responses:
             chat_input = {
+                "query": query,
                 "responses": responses,
                 "dashboard_info": {
                     "Dashboard": data.get("Dashboard", False),
                     "visualization": data.get("visualization", {"type": "none"})
                 }
             }
+            if thinking_queue:
+                thinking_queue.put("Đang tổng hợp kết quả...")
             chat_response = chat_completion_agent.run(json.dumps(chat_input, ensure_ascii=False))
-            chat_response_dict = process_response(chat_response, "Chat Completion Agent")
-            logger.info(f"Chat Completion Response: {json.dumps(chat_response_dict, indent=2, ensure_ascii=False)}")
+            if isinstance(chat_response, RunResponse):
+                chat_response = chat_response.content
+            logger.info(f"Chat Completion Response: {chat_response}")
 
-            # Tạo phản hồi cuối cùng, trả về dữ liệu để frontend vẽ dashboard
             final_response = {
                 "status": "success",
-                "message": chat_response_dict.get("message", "Không có câu trả lời."),
+                "message": chat_response if isinstance(chat_response, str) else "Không có câu trả lời.",
                 "data": {
-                    "result": chat_response_dict.get("message", "Không có câu trả lời."),
+                    "result": chat_response if isinstance(chat_response, str) else "Không có câu trả lời.",
                     "dashboard": {
-                        "enabled": chat_response_dict.get("Dashboard", False),
+                        "enabled": data.get("Dashboard", False),
                         "data": actual_results[0] if actual_results else [],
                         "visualization": data.get("visualization", {"type": "none"})
                     }
-                }
+                },
+                "logs": get_collected_logs()
             }
-
             return final_response
         else:
             return {
                 "status": "error",
                 "message": "Không có phản hồi từ các agent để xử lý.",
-                "data": {}
+                "data": {},
+                "logs": get_collected_logs()
             }
 
     except Exception as e:
@@ -122,5 +133,6 @@ def orchestrator_flow(query: str, orchestrator: Agent, sql_agent, sql_tool, rag_
         return {
             "status": "error",
             "message": f"Có lỗi xảy ra khi xử lý truy vấn: {str(e)}",
-            "data": {}
+            "data": {},
+            "logs": get_collected_logs()
         }

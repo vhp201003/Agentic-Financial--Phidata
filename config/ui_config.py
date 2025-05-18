@@ -19,108 +19,100 @@ AGENT_ENDPOINTS = {
 
 # Custom CSS for styling the Gradio interface
 CUSTOM_CSS = """
-body {
-    background-color: #1a1a1a;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-    margin: 0;
-    padding: 0;
-    height: 100vh;
-    overflow: hidden;
-}
-.gradio-container {
-    width: 100%;
-    height: 100vh;
-    margin: 0;
-    padding: 20px;
-    box-sizing: border-box;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-}
-.chatbot-container {
-    flex-grow: 1;
-    width: 100%;
+<style>
+/* Container chính */
+.chat-container {
+    max-height: 500px;
     overflow-y: auto;
-    padding-bottom: 120px;
-    box-sizing: border-box;
-}
-.chatbot {
-    height: 100%;
-    overflow-y: auto;
-}
-.chatbot .message {
-    border-radius: 15px;
-    padding: 12px 16px;
-    margin: 8px 12px;
-    max-width: 80%;
-}
-.chatbot .user {
-    background-color: #007bff;
-    color: white;
-    margin-left: auto;
-}
-.chatbot .bot {
-    background-color: #2d2d2d;
-    color: #e0e0e0;
-    margin-right: auto;
-}
-.chatbot .error {
-    background-color: #ff4d4d;
-    color: white;
-}
-.input-container {
-    background-color: #2d2d2d;
+    padding: 15px;
+    border: 1px solid #e0e0e0;
     border-radius: 10px;
-    padding: 10px;
-    width: calc(100% - 40px);
-    box-sizing: border-box;
-    position: fixed;
-    bottom: 70px;
-    left: 20px;
-    right: 20px;
+    background-color: #f5f7fa;
+    margin-bottom: 20px;
+}
+
+/* Bong bóng chat */
+.user-message {
     display: flex;
-    align-items: center;
+    justify-content: flex-end;
+    margin-bottom: 15px;
+}
+.assistant-message {
+    display: flex;
+    justify-content: flex-start;
+    margin-bottom: 15px;
+}
+.message-bubble {
+    max-width: 70%;
+    padding: 12px 18px;
+    border-radius: 15px;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+    word-wrap: break-word;
+    font-size: 16px;
+    line-height: 1.5;
+}
+.user-message .message-bubble {
+    background-color: #4CAF50;
+    color: white;
+}
+.assistant-message .message-bubble {
+    background-color: #ffffff;
+    color: #333;
+    border: 1px solid #e0e0e0;
+}
+
+/* Dashboard */
+.dashboard-container {
+    margin-left: 20px;
+    margin-bottom: 15px;
+    padding: 10px;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    background-color: #ffffff;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+}
+
+/* Thanh nhập liệu cố định ở dưới cùng */
+.input-container {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 10px 20px;
+    background-color: #ffffff;
+    border-top: 1px solid #e0e0e0;
     z-index: 1000;
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+}
+.input-container .stTextInput, .input-container .stSelectbox {
+    margin-bottom: 10px;
 }
 .button-container {
     display: flex;
-    justify-content: center;
-    margin-top: 10px;
-    position: fixed;
-    bottom: 20px;
-    left: 0;
-    right: 0;
-    z-index: 1000;
+    gap: 10px;
 }
-#agent-dropdown {
-    background-color: #333;
-    color: #e0e0e0;
-    border: none;
-}
-#submit-btn, #clear-btn {
+.stButton>button {
     background-color: #007bff;
     color: white;
-    border: none;
-    border-radius: 8px;
-    margin: 0 5px;
+    border-radius: 5px;
+    padding: 8px 15px;
 }
-#submit-btn:hover, #clear-btn:hover {
+.stButton>button:hover {
     background-color: #0056b3;
 }
-h1, h3 {
-    color: #e0e0e0;
-    text-align: center;
-    margin: 10px 0;
+.clear-button>button {
+    background-color: #dc3545;
 }
-.chatbot-container::-webkit-scrollbar {
-    width: 8px;
+.clear-button>button:hover {
+    background-color: #b02a37;
 }
-.chatbot-container::-webkit-scrollbar-thumb {
-    background-color: #007bff;
-    border-radius: 4px;
+
+/* Tiêu đề và bố cục tổng thể */
+.stTitle {
+    color: #333;
+    font-weight: 700;
 }
-.chatbot-container::-webkit-scrollbar-track {
-    background-color: #2d2d2d;
+.stMarkdown {
+    color: #555;
 }
+</style>
 """
