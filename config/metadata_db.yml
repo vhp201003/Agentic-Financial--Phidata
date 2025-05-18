@@ -88,3 +88,23 @@ relationships:
     to:
       table: stock_prices
       column: symbol
+
+common_queries:
+  - name: "Closing price on specific date"
+    description: "Get the closing price of a company on a specific date"
+    sql: "SELECT sp.close_price FROM companies c JOIN stock_prices sp ON c.symbol = sp.symbol WHERE c.name ILIKE '%{company}%' AND sp.date = '{date}'"
+  - name: "Average closing price by company"
+    description: "Calculate the average closing price for a company within a date range"
+    sql: "SELECT c.name, AVG(sp.close_price) AS avg_close_price FROM companies c JOIN stock_prices sp ON c.symbol = sp.symbol WHERE c.name ILIKE '%{company}%' AND sp.date BETWEEN '{start_date}' AND '{end_date}' GROUP BY c.name"
+  - name: "Compare closing price on specific date"
+    description: "Compare the closing price of two companies on a specific date"
+    sql: "SELECT c.name, sp.close_price FROM companies c JOIN stock_prices sp ON c.symbol = sp.symbol WHERE c.name IN ('{company1}', '{company2}') AND sp.date = '{date}'"
+  - name: "Highest closing price in range"
+    description: "Get the highest closing price of a company within a date range"
+    sql: "SELECT sp.date, sp.close_price FROM companies c JOIN stock_prices sp ON c.symbol = sp.symbol WHERE c.name ILIKE '%{company}%' AND sp.date BETWEEN '{start_date}' AND '{end_date}' ORDER BY sp.close_price DESC LIMIT 1"
+  - name: "Lowest closing price in range"
+    description: "Get the lowest closing price of a company within a date range"
+    sql: "SELECT sp.date, sp.close_price FROM companies c JOIN stock_prices sp ON c.symbol = sp.symbol WHERE c.name ILIKE '%{company}%' AND sp.date BETWEEN '{start_date}' AND '{end_date}' ORDER BY sp.close_price ASC LIMIT 1"
+  - name: "Time series data"
+    description: "Get the closing price time series for a company within a date range"
+    sql: "SELECT sp.date, sp.close_price FROM companies c JOIN stock_prices sp ON c.symbol = sp.symbol WHERE c.name ILIKE '%{company}%' AND sp.date BETWEEN '{start_date}' AND '{end_date}' ORDER BY sp.date"
