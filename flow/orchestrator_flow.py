@@ -27,25 +27,25 @@ def process_response(response: any, context: str) -> dict:
             return response_content
         elif not isinstance(response_content, str):
             logger.warning(f"[{context}] Unexpected result type: {type(response_content)}")
-            return standardize_response("error", "Xin lỗi, hệ thống không thể phân tích truy vấn của bạn. Vui lòng thử lại với một truy vấn khác.", {})
+            return standardize_response("error", "Sorry, the system cannot parse your query. Please try again with a different query.", {})
 
         return parse_response_to_json(response_content, context)
 
     except Exception as e:
         logger.error(f"[{context}] Error processing response: {str(e)}")
-        return standardize_response("error", "Xin lỗi, hệ thống không thể phân tích truy vấn của bạn. Vui lòng thử lại với một truy vấn khác.", {})
+        return standardize_response("error", "Sorry, the system cannot parse your query. Please try again with a different query.", {})
 
 def limit_lines(text: str, max_lines: int = 5) -> str:
-    """Giới hạn số dòng của text, tối đa max_lines dòng."""
+    """Limit the number of lines in text to max_lines."""
     lines = text.split("\n")
     if len(lines) > max_lines:
         limited_lines = lines[:max_lines]
-        limited_lines.append("... (đã lược bớt nội dung để tránh vượt giới hạn)")
+        limited_lines.append("... (content truncated to avoid exceeding limit)")
         return "\n".join(limited_lines)
     return text
 
 def limit_sql_records(sql_response: str, max_records: int = 5) -> str:
-    """Giới hạn số record trong SQL response, thêm '...' nếu vượt quá max_records."""
+    """Limit the number of records in SQL response, append '...' if exceeds max_records."""
     try:
         match = re.search(r'\[(.*)\]', sql_response, re.DOTALL)
         if not match:
@@ -81,25 +81,42 @@ def limit_sql_records(sql_response: str, max_records: int = 5) -> str:
         return sql_response
 
 def limit_records(data: list, max_records: int = 5, for_dashboard: bool = False) -> list:
-    """Giới hạn số record trong danh sách dữ liệu, chỉ áp dụng cho log Chat Completion, không giới hạn cho dashboard."""
+    """Limit the number of records in the data list, only for Chat Completion log, not for dashboard."""
     if not isinstance(data, list):
         logger.error(f"Expected list for limiting records, got {type(data)}")
         return []
     if for_dashboard:
-        # Không giới hạn dữ liệu cho dashboard, nhưng có thể đặt max an toàn nếu cần
+        # Do not limit data for dashboard, but set a safe max if needed
         max_dashboard_records = 1000
         if len(data) > max_dashboard_records:
             logger.info(f"Limiting {len(data)} dashboard records to {max_dashboard_records}")
             return data[:max_dashboard_records]
         return data
-    # Giới hạn cho log Chat Completion
+    # Limit for Chat Completion log
     if len(data) <= max_records:
         return data
     logger.info(f"Limiting {len(data)} records to {max_records} for Chat Completion log")
     return data[:max_records]
 
+def format_documents(documents: list) -> str:
+    """Format the list of documents into a readable string for the final response."""
+    if not documents:
+        return "No documents found."
+
+    # Format each document entry
+    formatted_docs = []
+    for doc in documents:
+        filename = doc.get("filename", "Unknown")
+        document_content = doc.get("document", "")
+        # Limit document content to avoid overly long output
+        doc_text = document_content[:200] + "..." if len(document_content) > 200 else document_content
+        formatted_docs.append(f"{{filename: \"{filename}\", document: \"{doc_text}\"}}")
+
+    # Join the formatted documents with newlines
+    return "\n".join(formatted_docs)
+
 def orchestrator_flow(query: str, orchestrator: Agent, sql_agent, sql_tool, rag_agent, rag_tool, chat_completion_agent) -> dict:
-    """Xử lý flow của Agent Team: phân việc, gọi agent con, và tổng hợp kết quả."""
+    """Execute the Agent Team flow: delegate tasks, call sub-agents, and combine results."""
     try:
         # Process orchestrator response (JSON)
         result = orchestrator.run(query)
@@ -110,16 +127,17 @@ def orchestrator_flow(query: str, orchestrator: Agent, sql_agent, sql_tool, rag_
         if result_dict.get("status") == "error":
             return {
                 "status": "error",
-                "message": "Xin lỗi, hệ thống không thể phân tích truy vấn của bạn. Vui lòng thử lại với một truy vấn khác, ví dụ: 'Giá cổ phiếu của Apple vào ngày 01/01/2025'.",
+                "message": "Sorry, the system cannot parse your query. Please try again with a different query, e.g., 'Stock price of Apple on 01/01/2025'.",
                 "data": {},
                 "logs": get_collected_logs()
             }
 
         # Process sub-queries
         data = result_dict.get("data", {})
-        rag_response = "Không có phản hồi từ RAG."
-        sql_response = "Không có phản hồi từ SQL."
-        actual_results = []  # Lưu trữ dữ liệu thực tế để vẽ dashboard
+        rag_response = "No response from RAG."
+        rag_documents = []  # Store the original documents from RAG
+        sql_response = "No response from SQL."
+        actual_results = []  # Store actual data for dashboard
 
         for agent_name in data.get("agents", []):
             sub_query = data.get("sub_queries", {}).get(agent_name)
@@ -127,7 +145,7 @@ def orchestrator_flow(query: str, orchestrator: Agent, sql_agent, sql_tool, rag_
                 logger.error(f"No sub-query provided for {agent_name}")
                 return {
                     "status": "error",
-                    "message": "Xin lỗi, hệ thống không thể xử lý yêu cầu của bạn. Vui lòng thử lại với một yêu cầu khác.",
+                    "message": "Sorry, the system cannot process your request. Please try again with a different request.",
                     "data": {},
                     "logs": get_collected_logs()
                 }
@@ -136,44 +154,59 @@ def orchestrator_flow(query: str, orchestrator: Agent, sql_agent, sql_tool, rag_
                 response_for_chat = final_response["response_for_chat"]
                 actual_result = final_response["actual_result"]
                 sql_response = limit_sql_records(response_for_chat, max_records=5)
-                # Giữ full actual_result cho dashboard
+                # Keep full actual_result for dashboard
                 dashboard_result = limit_records(actual_result, for_dashboard=True)
-                # Giới hạn actual_result cho log Chat Completion
+                # Limit actual_result for Chat Completion log
                 limited_result = limit_records(actual_result, max_records=5, for_dashboard=False)
                 logger.info(f"SQL Response (limited for log): {sql_response}")
                 logger.info(f"Dashboard records: {len(dashboard_result)}, Limited log records: {len(limited_result)}")
                 actual_results.append(dashboard_result)
             elif agent_name == "rag_agent":
-                final_response = rag_flow(sub_query, rag_agent, rag_tool)
-                rag_response = limit_lines(final_response, max_lines=10)
+                rag_result = rag_flow(sub_query, rag_agent, rag_tool)
+                rag_response = limit_lines(rag_result["summary"], max_lines=10)
+                rag_documents = rag_result["documents"]
                 logger.info(f"RAG Response: {rag_response}")
+                logger.info(f"RAG Documents: {rag_documents}")
 
-        # Kiểm tra actual_results để quyết định Dashboard
-        dashboard_enabled = data.get("Dashboard", False) and bool(actual_results and actual_results[0])  # Chỉ bật nếu có dữ liệu
+        # Prepare dashboard info
+        dashboard_enabled = data.get("Dashboard", False) and bool(actual_results and actual_results[0])
         dashboard_info = {
             "enabled": dashboard_enabled,
             "data": actual_results[0] if actual_results else [],
             "visualization": data.get("visualization", {"type": "none", "required_columns": [], "aggregation": None})
         }
+
+        # Combine RAG response, SQL response, and documents for Chat Completion
         chat_input = (
-            f"RAG response: {rag_response}\n"
-            f"SQL response: {sql_response}\n\n"
-            f"Dashboard info: {json.dumps(dashboard_info, ensure_ascii=False)}"
+            f"RAG response:\n{rag_response}\n\n"
+            f"SQL response:\n{sql_response}\n\n"
+            f"Dashboard info:\n{json.dumps(dashboard_info, ensure_ascii=False)}"
         )
         logger.info(f"Chat input: {chat_input}")
 
-        # Chat Completion Agent trả về text markdown
+        # Chat Completion Agent returns markdown text
         chat_response = chat_completion_agent.run(chat_input)
         if isinstance(chat_response, RunResponse):
             chat_response = chat_response.content
         logger.info(f"Chat Completion Response: {chat_response}")
 
-        # Tạo phản hồi cuối cùng
+        # Format the RAG documents for inclusion in the response
+        formatted_rag_docs = format_documents(rag_documents)
+
+        # Create the final response with documents and summary
+        final_message = (
+            f"Financial Report Sources:\n"
+            f"{formatted_rag_docs}\n\n"
+            f"Summary:\n"
+            f"{chat_response if isinstance(chat_response, str) else 'No response available.'}"
+        )
+
+        # Create the final response
         final_response = {
             "status": "success",
-            "message": chat_response if isinstance(chat_response, str) else "Không có câu trả lời.",
+            "message": final_message,
             "data": {
-                "result": chat_response if isinstance(chat_response, str) else "Không có câu trả lời.",
+                "result": chat_response if isinstance(chat_response, str) else "No response available.",
                 "dashboard": dashboard_info
             },
             "logs": get_collected_logs()
@@ -184,7 +217,7 @@ def orchestrator_flow(query: str, orchestrator: Agent, sql_agent, sql_tool, rag_
         logger.error(f"Error in orchestrator flow: {str(e)}")
         return {
             "status": "error",
-            "message": "Xin lỗi, hệ thống không thể xử lý yêu cầu của bạn. Vui lòng thử lại với một yêu cầu khác.",
+            "message": "Sorry, the system cannot process your request. Please try again with a different request.",
             "data": {},
             "logs": get_collected_logs()
         }

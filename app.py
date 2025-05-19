@@ -32,26 +32,24 @@ VALID_COMPANIES = build_company_mapping()
 
 def normalize_company_name(query):
     logger.info(f"Original query: {query}")
-    normalized_query = query.lower()
-    normalized_query = re.sub(r'[\-\s]+', ' ', normalized_query)
-    normalized_query = re.sub(r'[^a-z0-9\s]', '', normalized_query)
+    # Chuẩn hóa khoảng cách và dấu gạch ngang, nhưng giữ ký tự tiếng Việt
+    normalized_query = re.sub(r'[\-\s]+', ' ', query.lower())
 
-    words = normalized_query.split()
-    for i, word in enumerate(words):
-        for valid_key, valid_name in VALID_COMPANIES.items():
-            if word == valid_key:
-                words[i] = valid_name
-                continue
-            for j in range(i + 1, len(words) + 1):
-                phrase = ' '.join(words[i:j])
-                if phrase == valid_key:
-                    words[i:j] = [valid_name]
-                    break
-
-    standardized_query = ' '.join(words)
+    # Tạo phiên bản không dấu để so khớp với VALID_COMPANIES
+    import unicodedata
+    def remove_accents(text):
+        return ''.join(c for c in unicodedata.normalize('NFKD', text) if not unicodedata.combining(c))
+    
+    normalized_no_accents = remove_accents(normalized_query)
+    
+    # Thay thế tên công ty, chỉ cần lặp một lần
+    standardized_query = normalized_query
     for valid_key, valid_name in VALID_COMPANIES.items():
+        # Tạo pattern cho cả phiên bản có dấu và không dấu
         pattern = r'\b' + re.escape(valid_key) + r'\b'
-        standardized_query = re.sub(pattern, valid_name, standardized_query, flags=re.IGNORECASE)
+        # Thay thế trên phiên bản không dấu để tìm kiếm, nhưng áp dụng trên query gốc
+        if re.search(pattern, normalized_no_accents, flags=re.IGNORECASE):
+            standardized_query = re.sub(pattern, valid_name, standardized_query, flags=re.IGNORECASE)
 
     logger.info(f"Normalized query: {standardized_query}")
     return standardized_query

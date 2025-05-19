@@ -64,16 +64,17 @@ You are RAG Agent, an intelligent assistant specializing in summarizing financia
 
 2. Summarize document content:
    - If sub-query contains keywords (e.g., 'doanh thu'), focus on those aspects in the summary.
-   - Include company name in the summary (e.g., 'Apple đạt doanh thu...').
-   - If document content is empty or irrelevant, return: Không tìm thấy thông tin liên quan đến báo cáo tài chính của công ty trong tài liệu cung cấp.
+   - Include company name in the summary (e.g., 'Apple achieved revenue...').
+   - If document content is empty or irrelevant, return: No relevant financial report information found for the company in the provided documents.
 
 3. Format the output:
    - Return ONLY plain text, no JSON, no markdown code blocks, no additional formatting.
-   - Example: Theo báo cáo tài chính, Apple đạt doanh thu 61,110 triệu USD trong năm 2024, tăng 3% so với năm trước.
-   - If no relevant content: Không tìm thấy thông tin liên quan đến báo cáo tài chính của công ty trong tài liệu cung cấp.
+   - Do NOT include source information (filenames or companies) in the summary; only provide the summarized content.
+   - Example: Apple achieved revenue of 61,110 million USD in 2024, a 3% increase from the previous year.
+   - If no relevant content: No relevant financial report information found for the company in the provided documents.
 
 4. Error handling:
-   - If sub-query is invalid or cannot be processed, return: Không tìm thấy thông tin liên quan đến báo cáo tài chính của công ty trong tài liệu cung cấp.
+   - If sub-query is invalid or cannot be processed, return: No relevant financial report information found for the company in the provided documents.
 
 Do not include any text, explanations, markdown, or code outside the plain text summary.
 """

@@ -60,7 +60,7 @@ class CustomRAGTool(Toolkit):
             documents = []
             doc_ids = []
             doc_names = []
-            companies = []  # Thêm danh sách để gán company cho từng chunk
+            companies = []
             chunk_id = 0
             processed_files = []
             failed_files = []
@@ -151,7 +151,7 @@ class CustomRAGTool(Toolkit):
                         documents.append(chunk)
                         doc_ids.append(chunk_id)
                         doc_names.append(filename)
-                        companies.append(company)  # Gán company cho từng chunk
+                        companies.append(company)
                         chunk_id += 1
                     processed_files.append(filename)
 
@@ -181,7 +181,7 @@ class CustomRAGTool(Toolkit):
                     payload={
                         "text": doc_text,
                         "filename": doc_name,
-                        "company": company,  # Dùng company tương ứng với chunk
+                        "company": company,
                         "year": year,
                         "report_type": report_type,
                         "keywords": ["revenue", "profit", "financial", "annual"],
@@ -191,7 +191,7 @@ class CustomRAGTool(Toolkit):
                 for doc_id, embedding, doc_text, doc_name, year, company in zip(
                     doc_ids, embeddings, documents, doc_names,
                     [int(re.search(r"\b(202[0-5])\b", doc_text).group(1)) if re.search(r"\b(202[0-5])\b", doc_text) else 2024 for doc_text in documents],
-                    companies  # Dùng companies list để gán company
+                    companies
                 )
             ]
 
@@ -215,8 +215,8 @@ class CustomRAGTool(Toolkit):
             logger.error(f"Unexpected error in _load_documents: {str(e)}")
             raise
 
-    def run(self, query: str, company: str = None, description: str = None) -> str:
-        """Retrieve top 5 closest documents from Qdrant based on cosine similarity and return their content as plain text."""
+    def run(self, query: str, company: str = None, description: str = None) -> list:
+        """Retrieve top 5 closest documents from Qdrant and return their content along with metadata."""
         try:
             logger.info(f"Executing RAG query: {query}")
             self.client.get_collections()
@@ -266,7 +266,7 @@ class CustomRAGTool(Toolkit):
                 )
                 if not company_check[0]:
                     logger.warning(f"No documents found for company: {company}")
-                    return f"Không tìm thấy tài liệu liên quan đến {company} trong hệ thống. Đảm bảo tài liệu '{company}.pdf' đã được tải lên và xử lý."
+                    return [{"error": f"No relevant documents found for {company} in the system. Ensure '{company}.pdf' is uploaded and processed."}]
 
             filter_conditions = []
             if company:
@@ -300,7 +300,7 @@ class CustomRAGTool(Toolkit):
                 collection_name=self.collection_name,
                 query_vector=query_embedding,
                 query_filter=models.Filter(must=filter_conditions) if filter_conditions else None,
-                limit=5
+                limit=5  # Lấy tối đa 5 tài liệu
             )
 
             filtered_results = search_result
@@ -315,16 +315,23 @@ class CustomRAGTool(Toolkit):
                     logger.debug(f"Similarity for {hit.payload['filename']}: {similarity}")
 
             logger.debug(f"Found {len(search_result)} results before filtering, {len(filtered_results)} after filtering")
-            filtered_results = filtered_results[:3]
+            filtered_results = filtered_results[:5]  # Đảm bảo tối đa 5 tài liệu
 
             if not filtered_results:
                 logger.warning(f"No relevant documents found for query: {query}")
-                return f"Không tìm thấy tài liệu liên quan đến {query} trong hệ thống."
+                return [{"error": f"No relevant documents found for {query} in the system."}]
 
-            # Trả về nội dung tài liệu dưới dạng text
-            document_texts = [hit.payload["text"] for hit in filtered_results]
-            return "\n\n".join(document_texts)
+            # Trả về danh sách các tài liệu với nội dung và metadata
+            results = [
+                {
+                    "document": hit.payload["text"],  # Đổi key từ 'text' thành 'document'
+                    "filename": hit.payload["filename"],
+                    "company": hit.payload["company"]
+                }
+                for hit in filtered_results
+            ]
+            return results
 
         except Exception as e:
             logger.error(f"Error executing RAG query: {str(e)}")
-            return f"Lỗi khi truy xuất tài liệu: {str(e)}"
+            return [{"error": f"Error retrieving documents: {str(e)}"}]
