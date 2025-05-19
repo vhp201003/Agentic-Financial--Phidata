@@ -80,8 +80,8 @@ def limit_sql_records(sql_response: str, max_records: int = 5) -> str:
         logger.error(f"Error limiting SQL records: {str(e)}")
         return sql_response
 
-def limit_records(data: list, max_records: int = 5, for_dashboard: bool = False) -> list:
-    """Limit the number of records in the data list, only for Chat Completion log, not for dashboard."""
+def limit_records(data: list, max_records: int = 5, for_dashboard: bool = False, for_chat_input: bool = False) -> list:
+    """Limit the number of records in the data list, depending on the context."""
     if not isinstance(data, list):
         logger.error(f"Expected list for limiting records, got {type(data)}")
         return []
@@ -92,30 +92,16 @@ def limit_records(data: list, max_records: int = 5, for_dashboard: bool = False)
             logger.info(f"Limiting {len(data)} dashboard records to {max_dashboard_records}")
             return data[:max_dashboard_records]
         return data
-    # Limit for Chat Completion log
+    # Limit for Chat Completion log or chat input
     if len(data) <= max_records:
         return data
-    logger.info(f"Limiting {len(data)} records to {max_records} for Chat Completion log")
+    if for_chat_input:
+        logger.info(f"Limiting {len(data)} records to {max_records} for chat input to avoid token limit")
+    else:
+        logger.info(f"Limiting {len(data)} records to {max_records} for Chat Completion log")
     return data[:max_records]
 
-def format_documents(documents: list) -> str:
-    """Format the list of documents into a readable string for the final response."""
-    if not documents:
-        return "No documents found."
-
-    # Format each document entry
-    formatted_docs = []
-    for doc in documents:
-        filename = doc.get("filename", "Unknown")
-        document_content = doc.get("document", "")
-        # Limit document content to avoid overly long output
-        doc_text = document_content[:200] + "..." if len(document_content) > 200 else document_content
-        formatted_docs.append(f"{{filename: \"{filename}\", document: \"{doc_text}\"}}")
-
-    # Join the formatted documents with newlines
-    return "\n".join(formatted_docs)
-
-def orchestrator_flow(query: str, orchestrator: Agent, sql_agent, sql_tool, rag_agent, rag_tool, chat_completion_agent) -> dict:
+def orchestrator_flow(query: str, orchestrator: Agent, sql_agent, sql_tool, rag_tool, chat_completion_agent) -> dict:
     """Execute the Agent Team flow: delegate tasks, call sub-agents, and combine results."""
     try:
         # Process orchestrator response (JSON)
@@ -134,10 +120,12 @@ def orchestrator_flow(query: str, orchestrator: Agent, sql_agent, sql_tool, rag_
 
         # Process sub-queries
         data = result_dict.get("data", {})
-        rag_response = "No response from RAG."
         rag_documents = []  # Store the original documents from RAG
         sql_response = "No response from SQL."
         actual_results = []  # Store actual data for dashboard
+
+        # Lấy required_columns từ visualization để truyền vào sql_flow
+        required_columns = data.get("visualization", {}).get("required_columns", [])
 
         for agent_name in data.get("agents", []):
             sub_query = data.get("sub_queries", {}).get(agent_name)
@@ -150,7 +138,8 @@ def orchestrator_flow(query: str, orchestrator: Agent, sql_agent, sql_tool, rag_
                     "logs": get_collected_logs()
                 }
             if agent_name == "text2sql_agent":
-                final_response = sql_flow(sub_query, sql_agent, sql_tool)
+                # Truyền required_columns vào sql_flow
+                final_response = sql_flow(sub_query, sql_agent, sql_tool, required_columns=required_columns)
                 response_for_chat = final_response["response_for_chat"]
                 actual_result = final_response["actual_result"]
                 sql_response = limit_sql_records(response_for_chat, max_records=5)
@@ -162,52 +151,47 @@ def orchestrator_flow(query: str, orchestrator: Agent, sql_agent, sql_tool, rag_
                 logger.info(f"Dashboard records: {len(dashboard_result)}, Limited log records: {len(limited_result)}")
                 actual_results.append(dashboard_result)
             elif agent_name == "rag_agent":
-                rag_result = rag_flow(sub_query, rag_agent, rag_tool)
-                rag_response = limit_lines(rag_result["summary"], max_lines=10)
-                rag_documents = rag_result["documents"]
-                logger.info(f"RAG Response: {rag_response}")
+                rag_documents = rag_flow(sub_query, rag_tool)
                 logger.info(f"RAG Documents: {rag_documents}")
 
         # Prepare dashboard info
         dashboard_enabled = data.get("Dashboard", False) and bool(actual_results and actual_results[0])
+        dashboard_data = actual_results[0] if actual_results else []
+        
+        # Giới hạn dữ liệu trong dashboard_info khi gửi vào chat_input để tránh vượt giới hạn token
+        limited_dashboard_data = limit_records(dashboard_data, max_records=5, for_chat_input=True)
         dashboard_info = {
             "enabled": dashboard_enabled,
-            "data": actual_results[0] if actual_results else [],
+            "data": limited_dashboard_data,  # Dữ liệu giới hạn cho chat_input
             "visualization": data.get("visualization", {"type": "none", "required_columns": [], "aggregation": None})
         }
 
-        # Combine RAG response, SQL response, and documents for Chat Completion
+        # Combine RAG documents, SQL response, and limited dashboard info for Chat Completion
         chat_input = (
-            f"RAG response:\n{rag_response}\n\n"
+            f"RAG documents:\n{json.dumps(rag_documents, ensure_ascii=False)}\n\n"
             f"SQL response:\n{sql_response}\n\n"
             f"Dashboard info:\n{json.dumps(dashboard_info, ensure_ascii=False)}"
         )
         logger.info(f"Chat input: {chat_input}")
 
-        # Chat Completion Agent returns markdown text
+        # Chat Completion Agent generates the final response
         chat_response = chat_completion_agent.run(chat_input)
         if isinstance(chat_response, RunResponse):
             chat_response = chat_response.content
         logger.info(f"Chat Completion Response: {chat_response}")
 
-        # Format the RAG documents for inclusion in the response
-        formatted_rag_docs = format_documents(rag_documents)
-
-        # Create the final response with documents and summary
-        final_message = (
-            f"Financial Report Sources:\n"
-            f"{formatted_rag_docs}\n\n"
-            f"Summary:\n"
-            f"{chat_response if isinstance(chat_response, str) else 'No response available.'}"
-        )
-
-        # Create the final response
+        # Create the final response, sử dụng dữ liệu đầy đủ cho dashboard
+        final_dashboard_info = {
+            "enabled": dashboard_enabled,
+            "data": dashboard_data,  # Dữ liệu đầy đủ cho dashboard
+            "visualization": data.get("visualization", {"type": "none", "required_columns": [], "aggregation": None})
+        }
         final_response = {
             "status": "success",
-            "message": final_message,
+            "message": chat_response if isinstance(chat_response, str) else "No response available.",
             "data": {
                 "result": chat_response if isinstance(chat_response, str) else "No response available.",
-                "dashboard": dashboard_info
+                "dashboard": final_dashboard_info
             },
             "logs": get_collected_logs()
         }

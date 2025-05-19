@@ -217,6 +217,7 @@ class CustomRAGTool(Toolkit):
 
     def run(self, query: str, company: str = None, description: str = None) -> list:
         """Retrieve top 5 closest documents from Qdrant and return their content along with metadata."""
+        THRESHOLD = 0.7  # Threshold for similarity score
         try:
             logger.info(f"Executing RAG query: {query}")
             self.client.get_collections()
@@ -310,7 +311,7 @@ class CustomRAGTool(Toolkit):
                 for hit in search_result:
                     text_embedding = self.model.encode(hit.payload["text"]).tolist()
                     similarity = cosine_similarity([description_embedding], [text_embedding])[0][0]
-                    if similarity > 0.7:
+                    if similarity > THRESHOLD:
                         filtered_results.append(hit)
                     logger.debug(f"Similarity for {hit.payload['filename']}: {similarity}")
 

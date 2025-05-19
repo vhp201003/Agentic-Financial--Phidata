@@ -7,12 +7,18 @@ from utils.response import standardize_response
 
 logger = setup_logging()
 
-def sql_flow(sub_query: str, sql_agent, sql_tool) -> dict:
-    """Tích hợp sql_agent và sql_tool để tạo và thực thi SQL query."""
+def sql_flow(sub_query: str, sql_agent, sql_tool, required_columns: list = None) -> dict:
+    """Tích hợp sql_agent và sql_tool để tạo và thực thi SQL query, sử dụng required_columns để alias cột."""
     try:
-        # Gọi sql_agent để tạo SQL query
-        logger.info(f"Calling sql_agent with sub_query: {sub_query}")
-        sql_response = sql_agent.run(sub_query)
+        # Gọi sql_agent để tạo SQL query, truyền required_columns nếu có
+        logger.info(f"Calling sql_agent with sub_query: {sub_query}, required_columns: {required_columns}")
+        # Truyền required_columns vào sql_agent thông qua metadata hoặc tham số tùy chỉnh
+        if required_columns:
+            # Gắn required_columns vào sub_query hoặc truyền trực tiếp nếu sql_agent hỗ trợ
+            sql_response = sql_agent.run(sub_query, metadata={"required_columns": required_columns})
+        else:
+            sql_response = sql_agent.run(sub_query)
+
         if isinstance(sql_response, RunResponse):
             sql_response = sql_response.content
         

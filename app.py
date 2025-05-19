@@ -98,7 +98,7 @@ class QueryRequest(BaseModel):
 async def query_team(request: QueryRequest):
     logger.info(f"Received query for Agent Team: {request.query}")
     normalized_query = normalize_company_name(request.query)
-    response = orchestrator_flow(normalized_query, orchestrator, text_to_sql_agent, sql_tool, rag_agent, rag_tool, chat_completion_agent)
+    response = orchestrator_flow(normalized_query, orchestrator, text_to_sql_agent, sql_tool, rag_tool, chat_completion_agent)
 
     # Nếu không tìm thấy dữ liệu hoặc có lỗi, trả về thông báo thân thiện
     if response["status"] == "error" or response["data"].get("result") is None or not response["data"]["result"]:
