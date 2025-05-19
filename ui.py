@@ -2,14 +2,15 @@ import streamlit as st
 import requests
 import json
 import pandas as pd
-import plotly.express as px
 import plotly.graph_objects as go
 import markdown
 from datetime import datetime
+import time
+import numpy as np
 from config.ui_config import API_URL
 
 # Cấu hình
-st.set_page_config(layout="wide")
+st.set_page_config(layout="wide", page_title="Financial Assistant Chatbot")
 API_URL = API_URL + "/team"
 
 # Palette màu đồng bộ
@@ -19,6 +20,7 @@ COLOR_PALETTE = {
     "neutral": "#888",  # Xám
 }
 
+# Hàm chuyển bảng Markdown thành HTML
 def markdown_table_to_html(markdown_text):
     import re
     table_pattern = r'\|.*?\|\n\|[-|:\s]+\|\n(?:\|.*?\|\n)*'
@@ -52,8 +54,13 @@ def markdown_table_to_html(markdown_text):
     
     return markdown.markdown(html_content)
 
-# Hàm tạo dashboard (điều chỉnh để không dùng use_container_width=True)
+# Hàm tạo dashboard sử dụng plotly.graph_objects
 def create_dashboard(data, visualization):
+    import streamlit as st
+    import plotly.graph_objects as go
+    import time
+
+    key = f"plotly_chart_{visualization.get('type', 'none')}_{int(time.time())}"
     visualization_type = visualization.get("type", "none")
     required_columns = visualization.get("required_columns", [])
     aggregation = visualization.get("aggregation", None)
@@ -108,7 +115,7 @@ def create_dashboard(data, visualization):
             margin=dict(l=10, r=10, t=30, b=10),
             height=table_height
         )
-        st.plotly_chart(fig)
+        st.plotly_chart(fig, key=key)
 
     # 2. Time Series
     elif visualization_type == "time series":
@@ -134,14 +141,32 @@ def create_dashboard(data, visualization):
                 st.markdown("<p style='text-align: center; color: #888;'>Dữ liệu không chứa cột close_price hoặc volume.</p>", unsafe_allow_html=True)
                 return
             
+            dates = df["date"].tolist()
+            values = df[value_col].tolist()
+
             st.write(f"Debug: Rendering time series with date and {value_col}")
-            fig = px.line(df, x="date", y=value_col, title=f"Time Series of {value_col}",
-                          color_discrete_sequence=[COLOR_PALETTE["secondary"]])
-            fig.update_layout(
-                xaxis_title="Date", yaxis_title=value_col, margin=dict(l=10, r=10, t=30, b=10),
-                hovermode="x unified", showlegend=False, xaxis=dict(showgrid=True, gridcolor=COLOR_PALETTE["neutral"])
+            fig = go.Figure(
+                data=[
+                    go.Scatter(
+                        x=dates,
+                        y=values,
+                        mode="lines+markers",
+                        name=value_col,
+                        line=dict(color=COLOR_PALETTE["secondary"]),
+                        marker=dict(size=8)
+                    )
+                ]
             )
-            st.plotly_chart(fig)
+            fig.update_layout(
+                title=f"Time Series of {value_col}",
+                xaxis_title="Date",
+                yaxis_title=value_col,
+                margin=dict(l=10, r=10, t=30, b=10),
+                hovermode="x unified",
+                showlegend=False,
+                xaxis=dict(showgrid=True, gridcolor=COLOR_PALETTE["neutral"])
+            )
+            st.plotly_chart(fig, key=key)
         except Exception as e:
             st.write(f"Debug: Error in time series: {str(e)}")
             st.markdown(f"<p style='text-align: center; color: #888;'>Lỗi khi vẽ biểu đồ: {str(e)}</p>", unsafe_allow_html=True)
@@ -159,13 +184,27 @@ def create_dashboard(data, visualization):
                 return
 
             st.write(f"Debug: Rendering bar chart with {category_col} and {value_col}")
-            fig = px.bar(df, x=category_col, y=value_col, title=f"{value_col} by {category_col}",
-                         color_discrete_sequence=[COLOR_PALETTE["primary"]])
-            fig.update_layout(
-                xaxis_title=category_col, yaxis_title=value_col, margin=dict(l=10, r=10, t=30, b=10),
-                hovermode="x unified", showlegend=False, xaxis=dict(showgrid=True, gridcolor=COLOR_PALETTE["neutral"])
+            fig = go.Figure(
+                data=[
+                    go.Bar(
+                        x=df[category_col],
+                        y=df[value_col],
+                        marker_color=COLOR_PALETTE["primary"],
+                        text=df[value_col],
+                        textposition="auto"
+                    )
+                ]
             )
-            st.plotly_chart(fig)
+            fig.update_layout(
+                title=f"{value_col} by {category_col}",
+                xaxis_title=category_col,
+                yaxis_title=value_col,
+                margin=dict(l=10, r=10, t=30, b=10),
+                hovermode="x unified",
+                showlegend=False,
+                xaxis=dict(showgrid=True, gridcolor=COLOR_PALETTE["neutral"])
+            )
+            st.plotly_chart(fig, key=key)
         except Exception as e:
             st.write(f"Debug: Error in bar chart: {str(e)}")
             st.markdown(f"<p style='text-align: center; color: #888;'>Lỗi khi vẽ bar chart: {str(e)}</p>", unsafe_allow_html=True)
@@ -174,22 +213,25 @@ def create_dashboard(data, visualization):
     elif visualization_type == "pie":
         try:
             if aggregation == "count":
-                if len(mapped_columns) != 1:
-                    st.markdown("<p style='text-align: center; color: #888;'>Pie chart với aggregation 'count' yêu cầu đúng 1 cột danh mục.</p>", unsafe_allow_html=True)
-                    return
+                # Lấy cột danh mục (category_col) từ mapped_columns
                 category_col = mapped_columns[0]
                 if category_col not in df.columns:
                     st.write(f"Debug: Missing column: {category_col}")
                     st.markdown(f"<p style='text-align: center; color: #888;'>Dữ liệu thiếu cột: {category_col}.</p>", unsafe_allow_html=True)
                     return
+                
+                # Kiểm tra xem dữ liệu đã có cột 'count' chưa
                 if "count" in df.columns:
+                    # Nếu đã có cột 'count', sử dụng cột này làm value_col
                     df_pie = df[[category_col, "count"]]
                     value_col = "count"
                 else:
+                    # Nếu không có cột 'count', tự tính count từ cột danh mục
                     df_pie = df[category_col].value_counts().reset_index()
                     df_pie.columns = [category_col, 'count']
                     value_col = 'count'
             else:
+                # Trường hợp aggregation != "count" (ví dụ: sum, avg)
                 if len(mapped_columns) != 2:
                     st.markdown("<p style='text-align: center; color: #888;'>Pie chart yêu cầu đúng 2 cột: danh mục và giá trị.</p>", unsafe_allow_html=True)
                     return
@@ -201,11 +243,23 @@ def create_dashboard(data, visualization):
                 df_pie = df[[category_col, value_col]]
 
             st.write(f"Debug: Rendering pie chart with data: {df_pie.to_dict()}")
-            fig = px.pie(df_pie, names=category_col, values=value_col, title=f"Distribution of {value_col} by {category_col}",
-                         color_discrete_sequence=[COLOR_PALETTE["primary"], COLOR_PALETTE["secondary"]])
-            fig.update_traces(textinfo='percent+label', hovertemplate='%{label}: %{value} (%{percent})')
-            fig.update_layout(margin=dict(l=10, r=10, t=30, b=10), hovermode="closest")
-            st.plotly_chart(fig)
+            fig = go.Figure(
+                data=[
+                    go.Pie(
+                        labels=df_pie[category_col],
+                        values=df_pie[value_col],
+                        textinfo='percent+label',
+                        hovertemplate='%{label}: %{value} (%{percent})',
+                        marker=dict(colors=[COLOR_PALETTE["primary"], COLOR_PALETTE["secondary"]])
+                    )
+                ]
+            )
+            fig.update_layout(
+                title=f"Distribution of {value_col} by {category_col}",
+                margin=dict(l=10, r=10, t=30, b=10),
+                hovermode="closest"
+            )
+            st.plotly_chart(fig, key=key)
         except Exception as e:
             st.write(f"Debug: Error in pie chart: {str(e)}")
             st.markdown(f"<p style='text-align: center; color: #888;'>Lỗi khi vẽ pie chart: {str(e)}</p>", unsafe_allow_html=True)
@@ -223,13 +277,26 @@ def create_dashboard(data, visualization):
                 return
 
             st.write(f"Debug: Rendering histogram with {col}")
-            fig = px.histogram(df, x=col, title=f"Histogram of {col}", nbins=30,
-                               color_discrete_sequence=[COLOR_PALETTE["primary"]])
-            fig.update_layout(
-                xaxis_title=col, yaxis_title="Frequency", margin=dict(l=10, r=10, t=30, b=10),
-                hovermode="x unified", showlegend=False, xaxis=dict(showgrid=True, gridcolor=COLOR_PALETTE["neutral"])
+            fig = go.Figure(
+                data=[
+                    go.Histogram(
+                        x=df[col],
+                        nbinsx=30,
+                        marker_color=COLOR_PALETTE["primary"],
+                        opacity=0.75
+                    )
+                ]
             )
-            st.plotly_chart(fig)
+            fig.update_layout(
+                title=f"Histogram of {col}",
+                xaxis_title=col,
+                yaxis_title="Frequency",
+                margin=dict(l=10, r=10, t=30, b=10),
+                hovermode="x unified",
+                showlegend=False,
+                xaxis=dict(showgrid=True, gridcolor=COLOR_PALETTE["neutral"])
+            )
+            st.plotly_chart(fig, key=key)
         except Exception as e:
             st.write(f"Debug: Error in histogram: {str(e)}")
             st.markdown(f"<p style='text-align: center; color: #888;'>Lỗi khi vẽ histogram: {str(e)}</p>", unsafe_allow_html=True)
@@ -247,13 +314,28 @@ def create_dashboard(data, visualization):
                 return
 
             st.write(f"Debug: Rendering boxplot with {group_col} and {value_col}")
-            fig = px.box(df, x=group_col, y=value_col, title=f"Boxplot of {value_col} grouped by {group_col}",
-                         color_discrete_sequence=[COLOR_PALETTE["secondary"]])
+            unique_groups = df[group_col].unique()
+            traces = []
+            for group in unique_groups:
+                group_data = df[df[group_col] == group][value_col]
+                traces.append(
+                    go.Box(
+                        y=group_data,
+                        name=str(group),
+                        marker_color=COLOR_PALETTE["secondary"]
+                    )
+                )
+            fig = go.Figure(data=traces)
             fig.update_layout(
-                xaxis_title=group_col, yaxis_title=value_col, margin=dict(l=10, r=10, t=30, b=10),
-                hovermode="x unified", showlegend=False, xaxis=dict(showgrid=True, gridcolor=COLOR_PALETTE["neutral"])
+                title=f"Boxplot of {value_col} grouped by {group_col}",
+                xaxis_title=group_col,
+                yaxis_title=value_col,
+                margin=dict(l=10, r=10, t=30, b=10),
+                hovermode="x unified",
+                showlegend=True,
+                xaxis=dict(showgrid=True, gridcolor=COLOR_PALETTE["neutral"])
             )
-            st.plotly_chart(fig)
+            st.plotly_chart(fig, key=key)
         except Exception as e:
             st.write(f"Debug: Error in boxplot: {str(e)}")
             st.markdown(f"<p style='text-align: center; color: #888;'>Lỗi khi vẽ boxplot: {str(e)}</p>", unsafe_allow_html=True)
@@ -271,13 +353,30 @@ def create_dashboard(data, visualization):
                 return
 
             st.write(f"Debug: Rendering scatter plot with {x_col} and {y_col}")
-            fig = px.scatter(df, x=x_col, y=y_col, title=f"{x_col} vs {y_col}",
-                             color_discrete_sequence=[COLOR_PALETTE["primary"]])
-            fig.update_layout(
-                xaxis_title=x_col, yaxis_title=y_col, margin=dict(l=10, r=10, t=30, b=10),
-                hovermode="closest", showlegend=False, xaxis=dict(showgrid=True, gridcolor=COLOR_PALETTE["neutral"])
+            fig = go.Figure(
+                data=[
+                    go.Scatter(
+                        x=df[x_col],
+                        y=df[y_col],
+                        mode="markers",
+                        marker=dict(
+                            color=COLOR_PALETTE["primary"],
+                            size=10
+                        ),
+                        hovertemplate=f"{x_col}: %{{x}}<br>{y_col}: %{{y}}"
+                    )
+                ]
             )
-            st.plotly_chart(fig)
+            fig.update_layout(
+                title=f"{x_col} vs {y_col}",
+                xaxis_title=x_col,
+                yaxis_title=y_col,
+                margin=dict(l=10, r=10, t=30, b=10),
+                hovermode="closest",
+                showlegend=False,
+                xaxis=dict(showgrid=True, gridcolor=COLOR_PALETTE["neutral"])
+            )
+            st.plotly_chart(fig, key=key)
         except Exception as e:
             st.write(f"Debug: Error in scatter plot: {str(e)}")
             st.markdown(f"<p style='text-align: center; color: #888;'>Lỗi khi vẽ scatter plot: {str(e)}</p>", unsafe_allow_html=True)
@@ -292,10 +391,19 @@ def create_dashboard(data, visualization):
 
             matrix = np.array(data)
             st.write("Debug: Rendering heatmap")
-            fig = px.imshow(matrix, title="Correlation Matrix",
-                            color_continuous_scale=[COLOR_PALETTE["primary"], COLOR_PALETTE["secondary"]])
-            fig.update_layout(margin=dict(l=10, r=10, t=30, b=10), hovermode="closest")
-            st.plotly_chart(fig)
+            fig = go.Figure(
+                data=go.Heatmap(
+                    z=matrix,
+                    colorscale=[[0, COLOR_PALETTE["primary"]], [1, COLOR_PALETTE["secondary"]]],
+                    hoverongaps=False
+                )
+            )
+            fig.update_layout(
+                title="Correlation Matrix",
+                margin=dict(l=10, r=10, t=30, b=10),
+                hovermode="closest"
+            )
+            st.plotly_chart(fig, key=key)
         except Exception as e:
             st.write(f"Debug: Error in heatmap: {str(e)}")
             st.markdown(f"<p style='text-align: center; color: #888;'>Lỗi khi vẽ heatmap: {str(e)}</p>", unsafe_allow_html=True)
@@ -303,6 +411,7 @@ def create_dashboard(data, visualization):
     else:
         st.write(f"Debug: Unsupported visualization type: {visualization_type}")
         st.markdown(f"<p style='text-align: center; color: #888;'>Loại biểu đồ không được hỗ trợ: {visualization_type}.</p>", unsafe_allow_html=True)
+
 # Ánh xạ tên cột để xử lý sự không khớp
 COLUMN_MAPPING = {
     "average volume": "avg_volume",
@@ -311,95 +420,28 @@ COLUMN_MAPPING = {
     "close_price": "avg_close_price"
 }
 
-st.markdown("""
-<style>
-.chat-dashboard-container {
-    display: flex;
-    flex-direction: column;
-    width: 100vw;
-    min-height: calc(100vh - 70px);
-}
-.chat-container {
-    flex: 1;
-    overflow-y: auto;
-    padding: 10px;
-    border: 1px solid #e0e0e0;
-    border-radius: 5px;
-}
-.input-container {
-    height: 80px;
-    padding: 10px 0;
-}
-.user-message {
-    background-color: #4CAF50;
-    color: white;
-    margin-left: auto;
-    max-width: 70%;
-    padding: 10px;
-    border-radius: 10px;
-    margin-bottom: 10px;
-}
-.assistant-message {
-    background-color: white;
-    border: 1px solid #e0e0e0;
-    color: black;
-    max-width: 70%;
-    padding: 10px;
-    border-radius: 10px;
-    margin-bottom: 10px;
-}
-.avatar {
-    width: 40px;
-    height: 40px;
-    border-radius: 50%;
-    font-size: 24px;
-    text-align: center;
-    line-height: 40px;
-    margin: 0 10px;
-}
-.user-message .user-avatar {
-    background-color: #4CAF50;
-    color: white;
-}
-.assistant-message .assistant-avatar {
-    background-color: #007bff;
-    color: white;
-}
-.dashboard-container {
-    max-width: 40vw;  /* Chiếm 40% chiều rộng màn hình */
-    margin-left: 0;   /* Căn trái */
-    margin-bottom: 10px;
-}
-@media (max-width: 768px) {
-    .chat-dashboard-container {
-        flex-direction: column;
-    }
-    .avatar {
-        width: 30px;
-        height: 30px;
-        font-size: 20px;
-        line-height: 30px;
-    }
-    .timestamp {
-        font-size: 10px;
-    }
-    .input-container {
-        height: 100px;
-    }
-    table, th, td {
-        font-size: 12px;
-        padding: 5px;
-    }
-    .dashboard-container {
-        max-width: 100%;  /* Trên màn hình nhỏ, cho phép chiếm toàn bộ chiều rộng */
-    }
-}
-</style>
-""", unsafe_allow_html=True)
+# Sidebar
+with st.sidebar:
+    st.title('Financial Assistant Chatbot')
+    st.write('Chatbot phân tích tài chính sử dụng API.')
+    st.subheader('Tùy chọn')
+    if st.button('Xóa lịch sử chat', key="clear", type="secondary"):
+        st.session_state.chat_history = [{
+            "role": "assistant",
+            "content": "Tôi có thể giúp gì cho bạn hôm nay?",
+            "timestamp": datetime.now().strftime("%H:%M:%S %d/%m/%Y")
+        }]
+        st.session_state.dashboard_info = None
+        st.session_state.logs = None
+        st.rerun()
 
 # Khởi tạo session state
 if 'chat_history' not in st.session_state:
-    st.session_state.chat_history = []
+    st.session_state.chat_history = [{
+        "role": "assistant",
+        "content": "Tôi có thể giúp gì cho bạn hôm nay?",
+        "timestamp": datetime.now().strftime("%H:%M:%S %d/%m/%Y")
+    }]
 if 'dashboard_info' not in st.session_state:
     st.session_state.dashboard_info = None
 if 'logs' not in st.session_state:
@@ -407,102 +449,82 @@ if 'logs' not in st.session_state:
 
 # Tiêu đề
 st.title("Financial Assistant")
-st.markdown("Trò chuyện với các agent tài chính của bạn")
 
-# Khung chat (chiếm toàn bộ chiều rộng)
-st.markdown('<div class="chat-container">', unsafe_allow_html=True)
+# Hiển thị lịch sử chat
 for chat in st.session_state.chat_history:
-    if chat['role'] == 'user':
-        st.markdown(f"""
-        <div style='display: flex; justify-content: flex-end; align-items: center;'>
-            <div class='user-message'>
-                {markdown.markdown(chat['message'])}
-                <div class='timestamp'>{chat['timestamp']}</div>
-            </div>
-            <div class='avatar user-avatar'>👤</div>
-        </div>
-        """, unsafe_allow_html=True)
-    else:
-        # Tin nhắn bot + dashboard (nếu có) + log (nếu có)
-        st.markdown(f"""
-        <div style='display: flex; align-items: center;'>
-            <div class='avatar assistant-avatar'>🤖</div>
-            <div class='assistant-message'>
-                {markdown_table_to_html(chat['message'])}
-                <div class='timestamp'>{chat['timestamp']}</div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+    with st.chat_message(chat["role"]):
+        # Sử dụng get() để tránh lỗi KeyError, mặc định là "Unknown time"
+        timestamp = chat.get("timestamp", "Unknown time")
+        st.markdown(f"**{chat['role'].capitalize()}** - {timestamp}")
+        st.markdown(markdown_table_to_html(chat["content"]), unsafe_allow_html=True)
         # Hiển thị dashboard nếu có
-        if st.session_state.dashboard_info and st.session_state.dashboard_info['enabled']:
+        if chat["role"] == "assistant" and st.session_state.dashboard_info and st.session_state.dashboard_info['enabled']:
             with st.container():
-                st.markdown('<div class="dashboard-container">', unsafe_allow_html=True)
                 create_dashboard(st.session_state.dashboard_info['data'], st.session_state.dashboard_info['visualization'])
-                st.markdown('</div>', unsafe_allow_html=True)
-        # Hiển thị log nếu có
-        if st.session_state.logs:
-            with st.expander("Xem chi tiết log", expanded=False):
-                st.text(st.session_state.logs)
-st.markdown('</div>', unsafe_allow_html=True)
 
-# Tự động cuộn
-st.markdown("""
-<script>
-    const chatContainer = document.querySelector('.chat-container');
-    chatContainer.scrollTop = chatContainer.scrollHeight;
-</script>
-""", unsafe_allow_html=True)
+# Hiển thị log nếu có
+if st.session_state.logs:
+    with st.sidebar.expander("Xem chi tiết log", expanded=False):
+        st.text(st.session_state.logs)
 
-# Khung nhập liệu
-with st.container():
-    query = st.text_input("Nhập câu hỏi của bạn (ví dụ: Giá đóng cửa của Apple ngày 01/01/2025?)", key="query")
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("Gửi", key="send", type="primary"):
-            if query:
-                timestamp = datetime.now().strftime("%H:%M:%S %d/%m/%Y")
-                st.session_state.chat_history.append({"role": "user", "message": query, "timestamp": timestamp})
-                
+# Nhập tin nhắn người dùng
+if prompt := st.chat_input("Nhập câu hỏi của bạn (ví dụ: Giá đóng cửa của Apple ngày 01/01/2025?)"):
+    timestamp = datetime.now().strftime("%H:%M:%S %d/%m/%Y")
+    st.session_state.chat_history.append({"role": "user", "content": prompt, "timestamp": timestamp})
+    
+    with st.chat_message("user"):
+        st.markdown(f"**User** - {timestamp}")
+        st.write(prompt)
+
+    # Gửi yêu cầu đến API nếu tin nhắn cuối không phải từ assistant
+    if st.session_state.chat_history[-1]["role"] != "assistant":
+        with st.chat_message("assistant"):
+            with st.spinner("Đang xử lý..."):
                 try:
-                    response = requests.post(API_URL, json={"query": query})
+                    response = requests.post(API_URL, json={"query": prompt})
                     response_data = response.json()
-                    print(response_data, flush=True)
                     response_json = json.loads(response_data['response'])
                     if response_json['status'] == 'success':
+                        timestamp = datetime.now().strftime("%H:%M:%S %d/%m/%Y")
                         st.session_state.chat_history.append({
                             "role": "assistant",
-                            "message": response_json['message'],
-                            "timestamp": datetime.now().strftime("%H:%M:%S %d/%m/%Y")
+                            "content": response_json['message'],
+                            "timestamp": timestamp
                         })
                         if 'data' in response_json and 'dashboard' in response_json['data'] and response_json['data']['dashboard']['enabled']:
                             st.session_state.dashboard_info = response_json['data']['dashboard']
                         else:
                             st.session_state.dashboard_info = None
                         st.session_state.logs = response_json.get('logs', 'Không có log nào được gửi lên.')
+                        st.markdown(f"**Assistant** - {timestamp}")
+                        st.markdown(markdown_table_to_html(response_json['message']), unsafe_allow_html=True)
+                        # Hiển thị dashboard nếu có
+                        if st.session_state.dashboard_info and st.session_state.dashboard_info['enabled']:
+                            with st.container():
+                                create_dashboard(st.session_state.dashboard_info['data'], st.session_state.dashboard_info['visualization'])
                     else:
+                        timestamp = datetime.now().strftime("%H:%M:%S %d/%m/%Y")
                         st.session_state.chat_history.append({
                             "role": "assistant",
-                            "message": f"Lỗi: {response_json['message']}",
-                            "timestamp": datetime.now().strftime("%H:%M:%S %d/%m/%Y")
+                            "content": f"Lỗi: {response_json['message']}",
+                            "timestamp": timestamp
                         })
                         st.session_state.dashboard_info = None
                         st.session_state.logs = response_json.get('logs', 'Không có log nào được gửi lên.')
+                        st.markdown(f"**Assistant** - {timestamp}")
+                        st.write(f"Lỗi: {response_json['message']}")
                 except Exception as e:
+                    timestamp = datetime.now().strftime("%H:%M:%S %d/%m/%Y")
                     st.session_state.chat_history.append({
                         "role": "assistant",
-                        "message": f"Lỗi: Không thể kết nối đến API. {str(e)}",
-                        "timestamp": datetime.now().strftime("%H:%M:%S %d/%m/%Y")
+                        "content": f"Lỗi: Không thể kết nối đến API. {str(e)}",
+                        "timestamp": timestamp
                     })
                     st.session_state.dashboard_info = None
                     st.session_state.logs = 'Lỗi khi kết nối API, không có log.'
-                st.rerun()
-    with col2:
-        if st.button("Xóa lịch sử", key="clear", type="secondary"):
-            st.session_state.chat_history = []
-            st.session_state.dashboard_info = None
-            st.session_state.logs = None
-            st.rerun()
+                    st.markdown(f"**Assistant** - {timestamp}")
+                    st.write(f"Lỗi: Không thể kết nối đến API. {str(e)}")
 
-# Debug lịch sử chat
-st.write(f"Số tin nhắn trong lịch sử: {len(st.session_state.chat_history)}")
-st.write("Nội dung lịch sử chat:", st.session_state.chat_history)
+# # Debug lịch sử chat
+# st.write(f"Số tin nhắn trong lịch sử: {len(st.session_state.chat_history)}")
+# st.write("Nội dung lịch sử chat:", st.session_state.chat_history)
