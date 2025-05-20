@@ -4,8 +4,8 @@ from pathlib import Path
 import json
 import yaml
 from typing import Dict, Any
+import re
 
-# Thêm thư mục gốc dự án vào sys.path
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(BASE_DIR))
 
@@ -27,12 +27,10 @@ TOOLS_CONFIG = {
             "highest price", "lowest price", "average price", "total volume", "average volume",
             "highest volume", "weekly volume", "daily highlow range",
             "time series", "histogram", "boxplot", "scatter plot", "bar chart", "pie chart", "heatmap",
-            "normal return",
-            # Thêm các từ khóa liên quan đến biểu đồ
-            "chart", "plot", "graph", "visualization", "diagram"
+            "normal return", "chart", "plot", "graph", "visualization", "diagram"
         ],
         "sub_query_template": "{query}",
-        "description": "Queries database for stock prices or company info, and handles data visualization requests (e.g., charts, plots)"
+        "description": "Queries database for stock prices or company info, and handles data visualization requests"
     },
     "rag_agent": {
         "intents": [
@@ -47,250 +45,117 @@ TOOLS_CONFIG = {
     }
 }
 
-# Tải schema từ metadata_db.yml
 def load_metadata() -> dict:
-    """Đọc schema từ metadata_db.yml."""
-    metadata_file = BASE_DIR / "metadata_db.yml"
-    try:
-        with open(metadata_file, "r") as file:
-            metadata = yaml.safe_load(file)
-        logger.info("Successfully loaded metadata from metadata_db.yml")
-        return metadata
-    except FileNotFoundError:
-        logger.error("metadata_db.yml not found")
-        return {
-            "database_description": "DJIA companies database",
-            "tables": {
-                "companies": {
-                    "columns": [
-                        {"name": "symbol", "type": "VARCHAR(10)"},
-                        {"name": "name", "type": "VARCHAR(255)"},
-                        {"name": "sector", "type": "VARCHAR(100)"},
-                        {"name": "industry", "type": "VARCHAR(100)"},
-                        {"name": "country", "type": "VARCHAR(100)"},
-                        {"name": "website", "type": "VARCHAR(255)"},
-                        {"name": "market_cap", "type": "DECIMAL(15,2)"},
-                        {"name": "pe_ratio", "type": "DECIMAL(10,2)"},
-                        {"name": "dividend_yield", "type": "DECIMAL(5,2)"},
-                        {"name": "week_high_52", "type": "DECIMAL(10,2)"},
-                        {"name": "week_low_52", "type": "DECIMAL(10,2)"},
-                        {"name": "description", "type": "TEXT"}
-                    ]
-                },
-                "stock_prices": {
-                    "columns": [
-                        {"name": "id", "type": "SERIAL"},
-                        {"name": "symbol", "type": "VARCHAR(10)"},
-                        {"name": "date", "type": "DATE"},
-                        {"name": "close_price", "type": "DECIMAL(10,2)"},
-                        {"name": "volume", "type": "BIGINT"},
-                        {"name": "high_price", "type": "DECIMAL(10,2)"},
-                        {"name": "low_price", "type": "DECIMAL(10,2)"}
-                    ]
-                }
+    """Đọc schema và visualization metadata."""
+    metadata = {
+        "database_description": "DJIA companies database",
+        "tables": {
+            "companies": {
+                "columns": [
+                    {"name": "symbol", "type": "VARCHAR(10)"},
+                    {"name": "name", "type": "VARCHAR(255)"},
+                    {"name": "sector", "type": "VARCHAR(100)"},
+                    {"name": "industry", "type": "VARCHAR(100)"},
+                    {"name": "country", "type": "VARCHAR(100)"},
+                    {"name": "website", "type": "VARCHAR(255)"},
+                    {"name": "market_cap", "type": "DECIMAL(15,2)"},
+                    {"name": "pe_ratio", "type": "DECIMAL(10,2)"},
+                    {"name": "dividend_yield", "type": "DECIMAL(5,2)"},
+                    {"name": "week_high_52", "type": "DECIMAL(10,2)"},
+                    {"name": "week_low_52", "type": "DECIMAL(10,2)"},
+                    {"name": "description", "type": "TEXT"}
+                ]
+            },
+            "stock_prices": {
+                "columns": [
+                    {"name": "id", "type": "SERIAL"},
+                    {"name": "symbol", "type": "VARCHAR(10)"},
+                    {"name": "date", "type": "DATE"},
+                    {"name": "close_price", "type": "DECIMAL(10,2)"},
+                    {"name": "volume", "type": "BIGINT"},
+                    {"name": "high_price", "type": "DECIMAL(10,2)"},
+                    {"name": "low_price", "type": "DECIMAL(10,2)"}
+                ]
             }
         }
+    }
+
+    # Load visualization metadata
+    vis_metadata_file = BASE_DIR / "config" / "visualization_metadata.yml"
+    try:
+        with open(vis_metadata_file, "r") as file:
+            vis_metadata = yaml.safe_load(file)
+        logger.info("Successfully loaded visualization_metadata.yml")
+        metadata["visualization_metadata"] = vis_metadata["visualization_metadata"]
+    except FileNotFoundError:
+        logger.error("visualization_metadata.yml not found")
+        metadata["visualization_metadata"] = []
+    except Exception as e:
+        logger.error(f"Error loading visualization metadata: {str(e)}")
+        metadata["visualization_metadata"] = []
+
+    return metadata
 
 metadata = load_metadata()
-schema = yaml.dump({k: v for k, v in metadata.items() if k in ["database_description", "tables", "relationships"]}, default_flow_style=False, sort_keys=False)
+schema = yaml.dump({k: v for k, v in metadata.items() if k in ["database_description", "tables"]}, default_flow_style=False, sort_keys=False)
+vis_metadata_json = json.dumps(metadata["visualization_metadata"], ensure_ascii=False, indent=2)
 
 def create_orchestrator():
     """Tạo orchestrator và trả về Agent chính."""
     tools_config_json = json.dumps(TOOLS_CONFIG, ensure_ascii=False, indent=2)
     system_prompt = f"""
-You are Orchestrator, an intelligent assistant for financial analysis. Your role is to analyze user input, delegate tasks to Text2SQL or RAG agents, and generate JSON output with sub-queries and dashboard settings. Follow these steps using chain-of-thought reasoning:
+You are Orchestrator, analyzing financial queries and delegating tasks to text2sql_agent or rag_agent. 
+Return ONLY JSON output with visualization type, template name, sub-query, tickers, date range, aggregation, required columns, and UI requirements. Do NOT include text, explanations, markdown, or code outside JSON.
 
----
+1. Analyze Query:
+   - Match intents: 
+   {tools_config_json} 
+   (text2sql_agent: 'stock', 'chart', 'volume', 'heatmap'; rag_agent: 'report', 'revenue').
+   - Prioritize text2sql_agent for data queries (e.g., 'stock', 'price', 'volume', 'chart').
+   - Extract:
+     - Visualization type: Identify from query (e.g., 'table', 'line_chart', 'pie_chart', 'histogram', 'boxplot', 'scatter', 'heatmap'); null for non-visual queries.
+     - Tickers: e.g., 'AAPL, MSFT' from '(symbol: AAPL)' or names (e.g., 'Apple'); [] for queries not involving specific companies (e.g., 'distribution of DJIA companies by sector').
+     - Date range: e.g., 'in 2024' → {{'start_date': '2024-01-01', 'end_date': '2024-12-31'}}; 'on 2025-04-26' → {{'start_date': '2025-04-26', 'end_date': '2025-04-26'}}; null for non-time-based queries.
+     - Aggregation: 'count' for distributions, 'sum' for proportions, 'avg' for averages, 'null' for direct values or time series.
+   - General query: Set agents=[], message='System supports stock queries, report summaries, and visualizations'.
+   - Invalid query: Return error.
 
-### Step 1: Analyze the Query
-- **Identify Intents**:
-  - Use the TOOLS_CONFIG to match intents:
-    {tools_config_json}
-  - Intents for 'text2sql_agent' include keywords like 'giá', 'stock', 'market cap', 'volume', 'time series', 'histogram', 'boxplot', 'scatter plot', 'bar chart', 'pie chart', 'heatmap', 'chart', 'plot', 'graph', 'visualization', 'diagram', etc.
-  - Intents for 'rag_agent' include keywords like 'báo cáo', 'report', 'revenue', 'profit', 'strategy', etc.
-  - **Priority for Visualization**:
-    - If the query contains keywords related to visualization (e.g., 'chart', 'plot', 'graph', 'bar chart', 'pie chart', etc.), prioritize 'text2sql_agent' to fetch data from the database for creating the visualization.
-  - If the query contains intents from both agents (e.g., 'closing price and financial report for Apple'), assign to both agents.
-  - If the query is ambiguous (e.g., 'Hello'), classify as a general query.
-  - If the query is invalid (e.g., empty or nonsensical), classify as an error.
+2. Use Visualization Metadata:
+   - Visualization metadata:
+   {vis_metadata_json}
+   - For text2sql_agent queries:
+     - Identify vis_type from query (e.g., 'boxplot' from 'Create a boxplot').
+     - Find matching vis_type in visualization metadata.
+     - Within vis_type, select a template by matching intent_keywords with query (e.g., 'daily returns' matches template 'daily_returns_boxplot').
+     - If no template matches, return error.
+     - Extract required_columns and ui_requirements from the selected template.
+   - For rag_agent queries, set vis_type=null, required_columns=[], ui_requirements={{}}.
 
-- **Extract Key Information**:
-  - **Company/Ticker**: Identify company name or ticker (e.g., 'Honeywell' or 'HON') for logging purposes, but do not modify the query.
-  - **Date/Time Range**: Identify if the query specifies a date (e.g., 'on 2024-08-01'), a range (e.g., 'from 2024-06-01 to 2024-09-30'), a year (e.g., 'in 2024'), or 'most recent'.
-  - **Visualization Type**: If the query mentions a chart type (e.g., 'pie chart', 'bar chart', 'plot', 'graph'), note the visualization type.
-  - **Columns and Aggregation**:
-    - Identify if the query specifies columns (e.g., 'with columns sector, market_cap').
-    - Identify aggregation based on query intent:
-      - 'proportions', 'percentage', or similar terms → 'sum' (to calculate proportions based on a value column).
-      - 'distribution', 'count', or similar terms → 'count' (to count occurrences).
-      - 'average', 'avg', 'mean' → 'avg'.
-      - 'total', 'sum' → 'sum'.
-      - If no aggregation is implied, use null.
+3. Delegate:
+   - For text2sql_agent: Use original query as sub-query.
+   - For rag_agent: Use original query as sub-query.
+   - General query: Set agents=[].
+   - Invalid query: Return error.
 
-- **Examples**:
-  - Query: 'Create a bar chart of total dividends per share paid by each DJIA company in 2024'
-    - Intent: 'bar chart' (text2sql_agent, because of 'bar chart')
-    - Visualization: 'bar'
-    - Columns: 'company' (grouping column, inferred from 'each DJIA company'), 'total_dividends_per_share' (value column, inferred from 'total dividends per share')
-    - Aggregation: 'sum' (inferred from 'total dividends per share')
-    - Date: 'in 2024'
-  - Query: 'Create a pie chart of market capitalization proportions by sector as of April 26, 2025'
-    - Intent: 'pie chart' (text2sql_agent)
-    - Visualization: 'pie'
-    - Columns: 'sector' (grouping column), 'proportion' (value column, inferred from 'proportions')
-    - Aggregation: 'sum' (inferred from 'proportions', meaning sum of market_cap per sector divided by total market_cap)
-    - Date: 'as of April 26, 2025' (note: market_cap in companies table is static, so date may not apply)
-  - Query: 'Create a pie chart of sector distribution'
-    - Intent: 'pie chart' (text2sql_agent)
-    - Visualization: 'pie'
-    - Columns: 'sector' (grouping column), 'count' (value column, inferred from 'distribution')
-    - Aggregation: 'count' (inferred from 'distribution', meaning count of companies per sector)
-  - Query: 'Summarize financial report for Apple'
-    - Intent: 'report' (rag_agent)
-    - Visualization: None
-    - Columns: None
-    - Aggregation: None
-
----
-
-### Step 2: Delegate Tasks
-- **Sub-query**:
-  - Always use the **original user query** as the sub-query for both agents to preserve all details (e.g., dates, specific metrics).
-  - Example:
-    - Query: 'Create a bar chart of total dividends per share paid by each DJIA company in 2024'
-    - Sub-query: 'create a bar chart of total dividends per share paid by each djia company in 2024'
-
-- **Agent Assignment**:
-  - Assign to 'text2sql_agent' if intent matches 'text2sql_agent.intents'.
-  - Assign to 'rag_agent' if intent matches 'rag_agent.intents'.
-  - **Visualization Rule**:
-    - If the query involves creating a visualization (e.g., 'chart', 'plot', 'graph', etc.), and 'Dashboard' is set to true, ensure 'text2sql_agent' is included in the agents list to fetch data from the database.
-  - Assign to both agents if intents from both are present and the query does not involve visualization.
-  - For general queries: Set 'agents': [], 'message': 'System supports stock queries, report summaries, and visualizations'.
-  - For invalid queries: Return error.
-
-- **Examples**:
-  - Query: 'Create a bar chart of total dividends per share paid by each DJIA company in 2024'
-    - Agents: ['text2sql_agent'] (because of 'bar chart')
-    - Sub-query: 'create a bar chart of total dividends per share paid by each djia company in 2024'
-  - Query: 'Create a pie chart of market capitalization proportions by sector as of April 26, 2025'
-    - Agents: ['text2sql_agent']
-    - Sub-query: 'create a pie chart of market capitalization proportions by sector as of april 26, 2025'
-  - Query: 'Summarize financial report for Apple'
-    - Agents: ['rag_agent']
-    - Sub-query: 'summarize financial report for apple'
-
----
-
-### Step 3: Set Dashboard (for Text2SQL intents only)
-- **Dashboard**:
-  - Set 'Dashboard': true if the intent is from 'text2sql_agent' and involves data visualization or retrieval (e.g., stock price, market cap, pie chart, bar chart).
-  - Set 'Dashboard': false for 'rag_agent' intents, descriptive intents (e.g., 'description'), or general queries.
-
-- **Visualization** (if Dashboard is true):
-  - **Type**: Determine the visualization type based on the query:
-    - 'table': For single values or simple data (e.g., 'closing price', 'market cap').
-    - 'time series': For time-based data (e.g., 'time series', 'stock price' over a date range).
-    - 'histogram': For distribution data (e.g., 'histogram' of prices or volumes).
-    - 'boxplot': For grouped data with outliers (e.g., 'boxplot' by month).
-    - 'scatter': For correlation between two variables (e.g., 'scatter plot' of volume vs. price).
-    - 'bar': For categorical comparisons (e.g., 'bar chart' of metrics by company).
-    - 'pie': For proportional or count-based data (e.g., 'pie chart' of sector distribution).
-    - 'heatmap': For correlation matrices (e.g., 'heatmap' of stock metrics).
-
-  - **Required Columns**:
-    - Infer columns based on the query, intent, and dashboard requirements in ui.py.
-    - **Dashboard Requirements** (must match ui.py expectations):
-      - 'table':
-        - Any columns are acceptable, as long as they exist in the schema.
-      - 'time series':
-        - Requires 'date' as the x-axis column.
-        - Requires a value column, must be one of: 'close_price', 'volume'.
-      - 'histogram':
-        - Requires exactly 1 value column (e.g., 'close_price', 'volume').
-      - 'boxplot':
-        - Requires exactly 2 columns: a grouping column (e.g., 'month') and a value column (e.g., 'close_price').
-      - 'scatter':
-        - Requires exactly 2 value columns (e.g., 'volume', 'close_price').
-      - 'bar':
-        - Requires exactly 2 columns: a categorical column (e.g., 'company', 'sector') and a value column (e.g., 'market_cap', 'close_price').
-      - 'pie':
-        - If aggregation='count': Requires 1 categorical column (e.g., 'sector'), and the value column must be named 'count'.
-        - If aggregation='sum' or other: Requires 2 columns: a categorical column (e.g., 'sector') and a value column (must be 'proportion' for proportions, or another value column like 'market_cap').
-      - 'heatmap':
-        - Requires matrix data (list of lists), no specific columns needed.
-    - **Column Mapping in ui.py**:
-      - ui.py applies the following column mapping:
-        - 'average volume' → 'avg_volume'
-        - 'average close_price' → 'avg_close_price'
-        - 'volume' → 'avg_volume'
-        - 'close_price' → 'avg_close_price'
-      - SQL must return columns with their original names (e.g., 'close_price', 'volume'), and ui.py will map them accordingly.
-
-  - **Aggregation**:
-    - Infer aggregation based on the query:
-      - 'count': For counting occurrences (e.g., number of companies per sector, typically when query mentions 'distribution' or 'count').
-      - 'sum': For summing values (e.g., total market_cap per sector, typically when query mentions 'proportions', 'percentage', or 'total').
-      - 'avg': For averaging values (e.g., 'average price', 'avg', 'mean').
-      - null: If no aggregation is needed.
-    - For pie charts:
-      - Use 'count' if the query asks for a distribution of counts (e.g., 'pie chart of sector distribution').
-      - Use 'sum' if the query asks for proportions based on a value column (e.g., 'pie chart of market capitalization proportions').
-
-- **Examples**:
-  - Query: 'Create a bar chart of total dividends per share paid by each DJIA company in 2024'
-    - Dashboard: true
-    - Visualization: type='bar', required_columns=['company', 'total_dividends_per_share'], aggregation='sum'
-      - Note: 'total dividends per share' implies summing dividends per share for each company.
-  - Query: 'Create a pie chart of market capitalization proportions by sector as of April 26, 2025'
-    - Dashboard: true
-    - Visualization: type='pie', required_columns=['sector', 'proportion'], aggregation='sum'
-      - Note: 'proportions' implies summing market_cap and calculating proportions.
-  - Query: 'Create a pie chart of sector distribution'
-    - Dashboard: true
-    - Visualization: type='pie', required_columns=['sector', 'count'], aggregation='count'
-      - Note: 'distribution' implies counting companies per sector.
-  - Query: 'What was the closing price of Honeywell on October 15, 2024'
-    - Dashboard: true
-    - Visualization: type='table', required_columns=['date', 'close_price'], aggregation=null
-
----
-
-### Step 4: Generate Output
-- **JSON Output**:
-  - Format:
-    ```json
-    {{"status": "success" | "error", "message": "Query analyzed successfully" | "Invalid query" | "General query", "data": {{"agents": ["rag_agent" | "text2sql_agent"], "sub_queries": {{"rag_agent": "original query", "text2sql_agent": "original query"}}, "Dashboard": true | false, "visualization": {{"type": "table | time series | histogram | boxplot | scatter | bar | pie | heatmap", "required_columns": [], "aggregation": null | "count" | "avg" | "sum"}}}}}}
-For general query: 'agents': [], 'message': 'System supports stock queries, report summaries, and visualizations'.
-For invalid query: {{"status": "error", "message": "Invalid query", "data": {{}}}}.
-Examples:
-Query: 'Create a bar chart of total dividends per share paid by each DJIA company in 2024'
-json
-
-Sao chép
-{{"status": "success", "message": "Query analyzed successfully", "data": {{"agents": ["text2sql_agent"], "sub_queries": {{"text2sql_agent": "create a bar chart of total dividends per share paid by each djia company in 2024"}}, "Dashboard": true, "visualization": {{"type": "bar", "required_columns": ["company", "total_dividends_per_share"], "aggregation": "sum"}}}}}}
-Query: 'Create a pie chart of market capitalization proportions by sector as of April 26, 2025'
-json
-
-Sao chép
-{{"status": "success", "message": "Query analyzed successfully", "data": {{"agents": ["text2sql_agent"], "sub_queries": {{"text2sql_agent": "create a pie chart of market capitalization proportions by sector as of april 26, 2025"}}, "Dashboard": true, "visualization": {{"type": "pie", "required_columns": ["sector", "proportion"], "aggregation": "sum"}}}}}}
-Query: 'Summarize financial report for Apple'
-json
-
-Sao chép
-{{"status": "success", "message": "Query analyzed successfully", "data": {{"agents": ["rag_agent"], "sub_queries": {{"rag_agent": "summarize financial report for apple"}}, "Dashboard": false, "visualization": {{}}}}}}
-Step 5: Error Handling
-Unclassified input: {{"status": "error", "message": "Invalid query", "data": {{}}}}.
-JSON parsing error: {{"status": "error", "message": "Invalid JSON output", "data": {{}}}}.
-Do not include any text, explanations, markdown, or code outside the JSON output. Ensure JSON is properly formatted and complete.
+4. Output:
+   - JSON: {{"status": "success"|"error", "message": "...", "data": {{"agents": ["text2sql_agent"|"rag_agent"], "sub_queries": {{}}, "Dashboard": bool(True|False), "vis_type": str|null, "template_name": str|null, "tickers": [], "date_range": null|{{start_date, end_date}}, "aggregation": null|"count"|"sum"|"avg", "required_columns": [], "ui_requirements": {{}}}}}}
+   - Dashboard: true for visualization queries (e.g., line_chart, pie_chart), false for single-value queries (e.g., closing price) or rag_agent.
+   - Example: Query: 'Create a boxplot of daily returns for Apple in 2024'
+     - {{"status": "success", "message": "Query analyzed successfully", "data": {{"agents": ["text2sql_agent"], "sub_queries": {{"text2sql_agent": "create a boxplot of daily returns for Apple in 2024"}}, "Dashboard": true, "vis_type": "boxplot", "template_name": "daily_returns_boxplot", "tickers": ["AAPL"], "date_range": {{"start_date": "2024-01-01", "end_date": "2024-12-31"}}, "aggregation": "null", "required_columns": ["date", "daily_return"], "ui_requirements": {{"group_col": "date", "value_col": "daily_return", "group_transform": "to_month"}}}}}}
+   - Example: Query: 'Summarize annual report for Apple'
+     - {{"status": "success", "message": "Query analyzed successfully", "data": {{"agents": ["rag_agent"], "sub_queries": {{"rag_agent": "summarize annual report for Apple"}}, "Dashboard": false, "vis_type": null, "template_name": null, "tickers": ["AAPL"], "date_range": null, "aggregation": null, "required_columns": [], "ui_requirements": {{}}}}}}
 """
     return Agent(
-    model=Groq(
-    id=GROQ_MODEL,
-    api_key=GROQ_API_KEY,
-    client_params={"timeout": 30, "max_retries": 3}
-    ),
-    system_prompt=system_prompt,
-
-    # debug_mode=True
+        model=Groq(
+            id=GROQ_MODEL,
+            api_key=GROQ_API_KEY,
+            timeout=30,
+            max_retries=5,
+            temperature=0.2,
+            max_tokens=1000,
+            top_p=0.8,
+            response_format={"type": "json_object"}
+        ),
+        system_prompt=system_prompt,
+        # debug_mode=True
     )

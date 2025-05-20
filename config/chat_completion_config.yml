@@ -1,0 +1,37 @@
+formatting:
+  rag:
+    empty_message:
+      vi: "Không có tài liệu liên quan đến báo cáo tài chính."
+    summary_template: "{company}: {content} from {filename}"
+  sql:
+    empty_message:
+      vi: "Không tìm thấy dữ liệu tài chính từ SQL."
+    summary_template:
+      single: "{key}: {value}"
+      comparison: "{ticker1}: {value1} USD, {ticker2}: {value2} USD"
+    comparison_key_mapping:
+      AAPL: {company: "Apple", unit: "USD"}
+      MSFT: {company: "Microsoft", unit: "USD"}
+      AMGN: {company: "Amgen", unit: "USD"}
+      BA: {company: "Boeing", unit: "USD"}
+  dashboard:
+    empty_message:
+      vi: "Không có dữ liệu biểu đồ."
+    vis_type_templates:
+      table:
+        vi: "Bảng dữ liệu hiển thị thông tin chi tiết."
+      pie_chart:
+        vi: "Biểu đồ hình tròn thể hiện tỷ trọng thị trường của các ngành khác nhau."
+    default_template:
+      vi: "Biểu đồ {vis_type} thể hiện dữ liệu."
+output_template:
+  vi: |
+    # Phản hồi
+    ## Thông tin từ RAG
+    {rag_summary}
+    ## Thông tin từ SQL
+    {sql_summary}
+    ## Biểu đồ Dữ liệu
+    {dashboard_summary}
+    ## Tóm tắt
+    {answer_and_summary}

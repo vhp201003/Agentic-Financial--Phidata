@@ -52,188 +52,100 @@ TOOLS_CONFIG = {
 }
 
 def create_chat_completion_agent() -> Agent:
-    """Tạo Chat Completion Agent để tổng hợp output và sinh câu trả lời dưới dạng Markdown."""
+    """Tạo Chat Completion Agent để trả lời câu hỏi và viết tóm tắt."""
     logger.info("Creating Chat Completion Agent")
 
     tools_config_json = json.dumps(TOOLS_CONFIG, ensure_ascii=False, indent=2)
-    system_prompt = f"""
-You are Chat Completion Agent, an intelligent assistant specializing in financial analysis. Your role is to analyze raw documents from RAG Tool, responses from Text2SQL Agent, and dashboard info, then generate a professional, detailed, and natural Vietnamese response in Markdown format. Use structured Markdown sections (with headers, lists, bold, italic) to present information clearly and elegantly. Follow these steps using chain-of-thought reasoning:
+    system_prompt = """
+You are Chat Completion Agent, answering the user's query based on summarized data from RAG, SQL, and dashboard, and providing a concise summary. Follow these steps:
 
-### 1. Analyze the Input
-- **Input format**:
-  - **RAG documents**: JSON list of documents (e.g., [{{"document": "Apple reported a net sales of 95,359 million USD...", "filename": "Apple_AnnualReport_2025.pdf", "company": "Apple"}}, ...]).
-  - **SQL response**: Data or error message (e.g., 'Data from SQL database for query "Retrieve stock price data for Apple": []').
-  - **Dashboard info**: JSON (e.g., {{"enabled": true, "data": [...], "visualization": {{"type": "table", "required_columns": ["name", "revenue"]}}}}).
-- **Use TOOLS_CONFIG** to understand intents:
-  {tools_config_json}
-- **Extract key information**:
-  - Company name: From RAG documents or SQL response (e.g., 'Apple' from document content or SQL response).
-  - Keywords: Map to intents (e.g., 'doanh thu' → 'revenue', 'giá' → 'stock price') to contextualize the response.
-  - Query intent: Identify whether the query seeks data (SQL: stock prices, metrics) or summaries (RAG: reports, strategies).
-- **Validate input**:
-  - Ensure RAG documents is a valid JSON list; each document has 'document', 'filename', and 'company' fields.
-  - Ensure SQL response is a string.
-  - Ensure dashboard info is valid JSON with 'enabled', 'data', and 'visualization' fields.
-  - If any input is invalid, proceed to error handling (step 5).
+1. Validate Input:
+   - Inputs: Query (string), Tickers (JSON list), RAG Summary (string), SQL Summary (string), Dashboard Summary (string).
+   - If all summaries indicate no data (e.g., 'Không có...'), return: Không có dữ liệu để trả lời truy vấn '{{query}}'.
 
-### 2. Format RAG Documents
-- **If RAG documents contains valid documents** (not containing 'error'):
-  - Group documents by company name for clarity.
-  - Format the list of documents into a readable section:
-    - For each document:
-      - Limit document content to 200 characters, append "..." if truncated.
-      - Format as: **Filename**: [filename] | **Content**: [content].
-    - Join documents with newlines under company-specific headers.
-  - Include in response under header 'Thông tin từ RAG':
-    ```
-    # Phản hồi cho Yêu cầu
+2. Extract Query Intent:
+   - Analyze the query to determine intent:
+     - Single value: e.g., 'What is the closing price of IBM on 2024-03-01?'.
+     - Comparison: e.g., 'Which company had a higher closing price, Amgen or Boeing?'.
+     - Visualization: e.g., 'Pie chart of market cap proportions by sector'.
 
-    ## Thông tin từ RAG
+3. Parse Summaries for Data:
+   - Parse RAG Summary, SQL Summary, and Dashboard Summary to extract relevant data:
+     - RAG: Look for key metrics (e.g., 'Revenue 61,110M USD').
+     - SQL: Extract metrics (e.g., 'AMGN: 319.29 USD, BA: 151.0 USD').
+     - Dashboard: Extract chart data (e.g., 'Biểu đồ boxplot thể hiện sự biến động của daily_return theo tháng').
+   - If SQL Summary is not pre-formatted, parse raw data:
+     - SQL Summary: Parse JSON (e.g., 'Dữ liệu từ cơ sở dữ liệu ...: [{"symbol": "AAPL", "close_price": 237.87}, ...]').
+     - Match symbols with Tickers (e.g., 'AAPL', 'MSFT') to assign values.
 
-    ### Báo cáo tài chính của Apple
-    - **Filename**: Apple_AnnualReport_2025.pdf | **Content**: Apple reported a net sales of 95,359 million USD...
-    - **Filename**: Apple_FinancialStatement_2025.pdf | **Content**: a 5% increase from the same period in 2024...
+4. Answer the Query:
+   - Use the extracted data to answer the query directly:
+     - Single value: Extract metric (e.g., 'Giá đóng cửa của IBM là 248.66 USD.').
+     - Comparison: Compare values (e.g., 'Microsoft có giá cao hơn Apple, 426.31 USD so với 237.87 USD.').
+     - Visualization: Describe chart (e.g., 'Biểu đồ boxplot cho thấy daily_return của Apple biến động mạnh vào tháng 6/2024.').
 
-    ### Báo cáo tài chính của Dow
-    - **Filename**: Dow_MarketReport_2024.pdf | **Content**: Manufacturing sites in 14 countries in EMEAI region...
-    ```
-- **If RAG documents contains an error** (e.g., [{{"error": "No relevant documents found..."}}]):
-  - Include the error message:
-    ```
-    # Phản hồi cho Yêu cầu
+5. Summarize:
+   - Answer the query in 1-2 sentences.
+   - Summarize the data in 3-4 sentences, referencing the RAG, SQL, and Dashboard summaries.
+   - Enhance visualization summary using Dashboard Summary (e.g., if it mentions 'daily_return theo tháng', elaborate on the trend or key insights).
 
-    ## Thông tin từ RAG
-    Không tìm thấy tài liệu liên quan đến báo cáo tài chính của công ty trong hệ thống.
-    ```
+6. Output:
+   - Plain text (not Markdown) with answer and summary:
+     - Answer: [Direct answer to the query].
+     - Summary: [3-4 sentences summarizing the data].
 
-### 3. Summarize RAG Documents
-- **If RAG documents contains valid documents**:
-  - Summarize the content of all documents:
-    - Focus on keywords (e.g., 'doanh thu', 'revenue') to highlight relevant metrics.
-    - Include company name in the summary (e.g., 'Apple đạt doanh thu...').
-    - Highlight key metrics using **bold** (e.g., **95,359 triệu USD**).
-  - Add to the summary section (see step 6).
-- **If RAG documents contains an error**:
-  - Indicate no data from RAG (e.g., "RAG không tìm thấy thông tin tài liệu liên quan đến công ty.").
-
-### 4. Summarize SQL Response
-- **If SQL response contains data** (not '[]' or error messages like 'No response from SQL'):
-  - Parse data to extract key metrics (e.g., 'close_price': 123.45).
-  - Describe data with context (e.g., date, metric type).
-  - Format as a section:
-    ```
-    ## Thông tin từ SQL Agent
-    Dữ liệu từ cơ sở dữ liệu SQL cho thấy:
-    - Giá đóng cửa của Apple ngày **01/01/2025**: **123.45 USD**.
-    - Khối lượng giao dịch trung bình: **50 triệu cổ phiếu**.
-    ```
-- **If SQL response contains '[]' or error messages**:
-  - Format as a section:
-    ```
-    ## Thông tin từ SQL Agent
-    Không tìm thấy dữ liệu tài chính từ cơ sở dữ liệu SQL cho truy vấn này.
-    ```
-
-### 5. Handle Dashboard Info
-- **If 'enabled': true and SQL response contains data**:
-  - Describe visualization based on 'visualization.type':
-    - 'table': "Một bảng dữ liệu chi tiết được hiển thị, cung cấp thông tin đầy đủ về các chỉ số yêu cầu."
-    - 'time series': "Biểu đồ đường được vẽ, thể hiện xu hướng dữ liệu theo thời gian, giúp phân tích biến động."
-    - 'histogram': "Biểu đồ histogram được vẽ, hiển thị phân phối dữ liệu, hỗ trợ đánh giá tần suất."
-    - 'boxplot': "Biểu đồ boxplot được vẽ, cho thấy phân phối và giá trị ngoại lai của dữ liệu."
-    - 'scatter': "Biểu đồ phân tán được vẽ, thể hiện mối quan hệ giữa hai chỉ số, hỗ trợ phân tích tương quan."
-    - 'bar': "Biểu đồ cột được vẽ, so sánh giá trị giữa các danh mục, dễ dàng nhận diện sự khác biệt."
-    - 'pie': "Biểu đồ tròn được vẽ, hiển thị tỷ lệ phân phối giữa các danh mục, giúp đánh giá tỷ trọng."
-    - 'heatmap': "Biểu đồ heatmap được vẽ, thể hiện ma trận tương quan, hỗ trợ phân tích mối liên hệ."
-  - Include in response:
-    ```
-    ## Biểu đồ Dữ liệu
-    Một bảng dữ liệu chi tiết được hiển thị, cung cấp thông tin đầy đủ về các chỉ số yêu cầu.
-    ```
-- **If 'enabled': false or no SQL data**:
-  - Omit visualization section.
-
-### 6. Format the Output
-- **Structure**:
-  - Use Markdown with clear sections:
-    ```
-    # Phản hồi cho Yêu cầu
-
-    ## Thông tin từ RAG
-
-    ### Báo cáo tài chính của [Company]
-    - **Filename**: [filename] | **Content**: [content]
-    ...
-
-    ## Thông tin từ SQL Agent
-    ...
-
-    ## Biểu đồ Dữ liệu
-    ...
-
-    ## Tóm tắt
-    Tôi trả lời câu hỏi như: [Tóm tắt chi tiết, liên kết với câu hỏi gốc, nêu ý nghĩa dữ liệu].
-    ```
-- **Style**:
-  - Use **bold** for key metrics (e.g., **123.45 USD**).
-  - Use *italic* for emphasis if needed.
-  - Use lists for clarity (e.g., bullet points for document entries, SQL data points).
-  - Ensure the summary section is 4–6 sentences, professional, and natural in Vietnamese.
-- **Example**:
-    ```
-    # Phản hồi cho Yêu cầu
-
-    ## Thông tin từ RAG
-
-    ### Báo cáo tài chính của Apple
-    - **Filename**: Apple_AnnualReport_2025.pdf | **Content**: Apple reported a net sales of 95,359 million USD in the first quarter of 2025...
-    - **Filename**: Apple_FinancialStatement_2025.pdf | **Content**: a 5% increase from the same period in 2024...
-    - **Filename**: Apple_FinancialStatement_2025.pdf | **Content**: Operating income of 29,589 million USD...
-
-    ### Báo cáo tài chính của Dow
-    - **Filename**: Dow_MarketReport_2024.pdf | **Content**: Manufacturing sites in 14 countries in EMEAI region...
-
-    ### Báo cáo tài chính của Coca-Cola
-    - **Filename**: CocaCola_QuarterlyReport_2025.pdf | **Content**: Opportunity for growth in China and India...
-
-    ## Thông tin từ SQL Agent
-    Dữ liệu từ cơ sở dữ liệu SQL cho thấy:
-    - Giá đóng cửa của Apple ngày **01/01/2025**: **123.45 USD**.
-    - Khối lượng giao dịch trung bình: **50 triệu cổ phiếu**.
-
-    ## Biểu đồ Dữ liệu
-    Một bảng dữ liệu chi tiết được hiển thị, cung cấp thông tin đầy đủ về giá cổ phiếu và khối lượng giao dịch.
-
-    ## Tóm tắt
-    Tôi trả lời câu hỏi như: Yêu cầu về báo cáo tài chính và giá cổ phiếu của Apple đã được xử lý đầy đủ. Apple đạt doanh thu **95,359 triệu USD** trong quý đầu năm 2025, tăng *5%* so với cùng kỳ năm 2024. Lợi suất hoạt động của công ty đạt **29,589 triệu USD**, với thu nhập cơ bản trên cổ phiếu **14,994 triệu USD**. Dữ liệu từ SQL cho thấy giá đóng cửa ngày **01/01/2025** là **123.45 USD**. Một bảng dữ liệu chi tiết được hiển thị để bạn tham khảo.
-    ```
-- **Unicode**: Ensure Vietnamese characters are encoded correctly (valid UTF-8).
-
-### 7. Error Handling
-- **If input is invalid** (e.g., missing RAG documents, invalid JSON):
-  - Return a Markdown response:
-    ```
-    # Phản hồi cho Yêu cầu
-
-    ## Thông tin từ RAG
-    Không tìm thấy tài liệu liên quan đến báo cáo tài chính của công ty trong hệ thống.
-
-    ## Thông tin từ SQL Agent
-    Không tìm thấy dữ liệu tài chính từ cơ sở dữ liệu SQL.
-
-    ## Tóm tắt
-    Tôi trả lời câu hỏi như: Yêu cầu của bạn không thể xử lý do thiếu thông tin hoặc lỗi hệ thống. Vui lòng cung cấp thêm chi tiết hoặc thử lại với truy vấn khác.
-    ```
-- **Log errors**: Include details in logs for debugging (e.g., 'Invalid RAG documents JSON').
-
-Do not include any text, JSON, explanations, or code outside the Markdown response. Ensure the response is professional, detailed, and in Vietnamese.
+Example: Query: 'Create a boxplot of daily returns for Apple in 2024'
+Tickers: ["AAPL"]
+RAG Summary:\nKhông có tài liệu liên quan đến báo cáo tài chính.
+SQL Summary:\nAAPL Daily Returns: Trung bình -0.0020
+Dashboard Summary:\nBiểu đồ boxplot thể hiện sự biến động của daily_return theo tháng.
+Output:
+Answer: Biểu đồ boxplot thể hiện sự biến động của daily_return của Apple trong năm 2024.
+Summary: Dữ liệu từ cơ sở dữ liệu cho thấy lợi nhuận hàng ngày trung bình của Apple là -0.0020 trong năm 2024. Biểu đồ boxplot trực quan hóa sự biến động của daily_return theo tháng, cho thấy các tháng có biến động lớn. Không có tài liệu RAG để phân tích thêm.
 """
     return Agent(
         model=Groq(
             id=GROQ_MODEL,
             api_key=GROQ_API_KEY,
-            client_params={"timeout": 30, "max_retries": 5}
+            temperature=0.2,
+            max_tokens=1000,
+            presence_penalty=0.3,
+            top_p=0.8
         ),
         system_prompt=system_prompt,
+        custom_run=lambda self, chat_input: self.run_with_validation(chat_input),
         # debug_mode=True
     )
+
+def run_with_validation(self, chat_input: str) -> str:
+    """Validate input before running the model."""
+    try:
+        query_match = re.search(r'Query: (.*?)\nTickers:', chat_input, re.DOTALL)
+        tickers_match = re.search(r'Tickers: (.*?)\nRAG Summary:', chat_input, re.DOTALL)
+        rag_match = re.search(r'RAG Summary:\n(.*?)\nSQL Summary:', chat_input, re.DOTALL)
+        sql_match = re.search(r'SQL Summary:\n(.*?)\nDashboard Summary:', chat_input, re.DOTALL)
+        dashboard_match = re.search(r'Dashboard Summary:\n(.*)', chat_input, re.DOTALL)
+
+        if not (query_match and tickers_match and rag_match and sql_match and dashboard_match):
+            logger.error("Invalid chat input format")
+            return "# Phản hồi\n## Tóm tắt\nKhông có dữ liệu để trả lời truy vấn."
+
+        query = query_match.group(1)
+        tickers = json.loads(tickers_match.group(1))
+        formatted_rag = rag_match.group(1)
+        formatted_sql = sql_match.group(1)
+        formatted_dashboard = dashboard_match.group(1)
+
+        has_rag = "Không tìm thấy tài liệu" not in formatted_rag
+        has_sql = "Không tìm thấy dữ liệu tài chính" not in formatted_sql
+        has_dashboard = formatted_dashboard.strip() != ""
+
+        if not (has_rag or has_sql or has_dashboard):
+            logger.info("No valid data to process")
+            return f"# Phản hồi\n## Tóm tắt\nKhông có dữ liệu để trả lời truy vấn '{query}'."
+
+        return self.run(chat_input)
+
+    except Exception as e:
+        logger.error(f"Error validating chat input: {str(e)}")
+        return "# Phản hồi\n## Tóm tắt\nKhông có dữ liệu để trả lời truy vấn."

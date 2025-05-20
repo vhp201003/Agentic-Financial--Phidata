@@ -82,7 +82,12 @@ Do not include any text, explanations, markdown, or code outside the plain text 
         model=Groq(
             id=GROQ_MODEL,
             api_key=GROQ_API_KEY,
-            client_params={"timeout": 30, "max_retries": 3}
+            timeout=30,
+            max_retries=5,
+            temperature=0.7,
+            max_tokens=1500,  # Tăng cho RAG output dài
+            presence_penalty=0.3,
+            top_p=0.8
         ),
         system_prompt=system_prompt,
         # debug_mode=True

@@ -10,3 +10,4 @@ pandas==2.2.2
 sentence-transformers==2.6.0
 gradio
 tabulate
+streamlit

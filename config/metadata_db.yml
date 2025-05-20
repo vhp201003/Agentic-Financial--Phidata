@@ -1,3 +1,4 @@
+```yaml
 database_description: Dow Jones Industrial Average (DJIA) companies database
 
 tables:
@@ -108,3 +109,40 @@ common_queries:
   - name: "Time series data"
     description: "Get the closing price time series for a company within a date range"
     sql: "SELECT sp.date, sp.close_price FROM companies c JOIN stock_prices sp ON c.symbol = sp.symbol WHERE c.name ILIKE '%{company}%' AND sp.date BETWEEN '{start_date}' AND '{end_date}' ORDER BY sp.date"
+
+template_query:
+  - name: "daily_returns_boxplot"
+    description: "Get daily returns for a company within a date range for boxplot"
+    required_columns: ["date", "daily_return"]
+    requires_date: true
+    sql: "SELECT date, (close_price - LAG(close_price) OVER (PARTITION BY symbol ORDER BY date)) / LAG(close_price) OVER (PARTITION BY symbol ORDER BY date) AS daily_return FROM stock_prices WHERE symbol = '{ticker}' AND date BETWEEN '{start_date}' AND '{end_date}' ORDER BY date;"
+  - name: "daily_returns_histogram"
+    description: "Get daily returns for a company within a date range for histogram"
+    required_columns: ["daily_return"]
+    requires_date: true
+    sql: "SELECT (close_price - LAG(close_price) OVER (PARTITION BY symbol ORDER BY date)) / LAG(close_price) OVER (PARTITION BY symbol ORDER BY date) AS daily_return FROM stock_prices WHERE symbol = '{ticker}' AND date BETWEEN '{start_date}' AND '{end_date}';"
+  - name: "boxplot_monthly"
+    description: "Get monthly closing prices for a company within a date range"
+    required_columns: ["month", "close_price"]
+    requires_date: true
+    sql: "SELECT TO_CHAR(date, 'YYYY-MM') AS month, close_price FROM stock_prices WHERE symbol = '{ticker}' AND date BETWEEN '{start_date}' AND '{end_date}' ORDER BY date;"
+  - name: "scatter_volume_price"
+    description: "Get average daily volume and closing price for companies within a date range"
+    required_columns: ["avg_daily_volume", "avg_closing_price"]
+    requires_date: true
+    sql: "SELECT symbol, AVG(volume) AS avg_daily_volume, AVG(close_price) AS avg_closing_price FROM stock_prices WHERE date BETWEEN '{start_date}' AND '{end_date}' GROUP BY symbol ORDER BY avg_daily_volume, avg_closing_price;"
+  - name: "pie_chart_count"
+    description: "Get distribution of companies by sector with count"
+    required_columns: ["sector", "count"]
+    requires_date: false
+    sql: "SELECT sector, COUNT(*) AS count FROM companies GROUP BY sector ORDER BY COUNT(*) DESC LIMIT 5;"
+  - name: "pie_chart_proportion"
+    description: "Get proportion of market cap by sector"
+    required_columns: ["sector", "proportion"]
+    requires_date: false
+    sql: "SELECT sector, SUM(market_cap) / (SELECT SUM(market_cap) FROM companies) * 100 AS proportion FROM companies GROUP BY sector ORDER BY proportion DESC LIMIT 5;"
+  - name: "line_chart_volume"
+    description: "Get daily trading volume for a company within a date range"
+    required_columns: ["date", "volume"]
+    requires_date: true
+    sql: "SELECT date, volume FROM stock_prices WHERE symbol = '{ticker}' AND date BETWEEN '{start_date}' AND '{end_date}' ORDER BY date;"
