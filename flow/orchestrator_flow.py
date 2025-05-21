@@ -1,3 +1,4 @@
+# flow/orchestrator_flow.py
 import json
 from pathlib import Path
 from phi.agent import Agent, RunResponse
@@ -9,29 +10,30 @@ from flow.rag_flow import rag_flow
 from flow.chat_completion_flow import chat_completion_flow
 import re
 import yaml
+from agents.visualize_agent import create_visualize_agent
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 logger = setup_logging()
 
 def load_metadata() -> dict:
-    """Đọc visualization metadata."""
+    """Load visualized templates."""
     metadata = {"template_query": []}
-    vis_metadata_file = BASE_DIR / "config" / "visualization_metadata.yml"
+    vis_template_file = BASE_DIR / "config" / "visualized_template.yml"
     try:
-        with open(vis_metadata_file, "r") as file:
-            vis_metadata = yaml.safe_load(file)
-        logger.info("Successfully loaded visualization_metadata.yml")
-        metadata["visualization_metadata"] = vis_metadata["visualization_metadata"]
+        with open(vis_template_file, "r") as file:
+            vis_template = yaml.safe_load(file)
+        logger.info("Successfully loaded visualized_template.yml")
+        metadata["visualized_template"] = vis_template["visualized_template"]
     except FileNotFoundError:
-        logger.error("visualization_metadata.yml not found")
-        metadata["visualization_metadata"] = []
+        logger.error("visualized_template.yml not found")
+        metadata["visualized_template"] = []
     except Exception as e:
-        logger.error(f"Error loading visualization metadata: {str(e)}")
-        metadata["visualization_metadata"] = []
+        logger.error(f"Error loading visualized_template: {str(e)}")
+        metadata["visualized_template"] = []
     return metadata
 
 def process_response(response: any, context: str) -> dict:
-    """Process response, log token metrics, and return JSON dict (only for Orchestrator)."""
+    """Process response, log token metrics, and return JSON dict."""
     try:
         if isinstance(response, RunResponse):
             metrics = getattr(response, 'metrics', {})
@@ -68,6 +70,7 @@ def limit_lines(text: str, max_lines: int = 5) -> str:
     return text
 
 def limit_sql_records(sql_response: str, max_records: int = 5) -> str:
+    """Limit the number of records in SQL response."""
     try:
         match = re.search(r'\[(.*)\]', sql_response, re.DOTALL)
         if not match:
@@ -85,14 +88,13 @@ def limit_sql_records(sql_response: str, max_records: int = 5) -> str:
 
         limited_records = records[:max_records]
         limited_records_str = json.dumps(limited_records, ensure_ascii=False)
-        truncated_response = sql_response[:match.start()] + f'{limited_records_str[:-1]}, ...]' + sql_response[match.end():]
-        return truncated_response
+        return sql_response[:match.start()] + limited_records_str + sql_response[match.end():]
     except Exception as e:
         logger.error(f"Error limiting SQL records: {str(e)}")
         return sql_response
 
 def limit_records(data: list, max_records: int = 5, for_dashboard: bool = False, for_chat_input: bool = False) -> list:
-    """Limit the number of records in the data list, depending on the context."""
+    """Limit the number of records in the data list."""
     if not isinstance(data, list):
         logger.error(f"Expected list for limiting records, got {type(data)}")
         return []
@@ -110,8 +112,9 @@ def limit_records(data: list, max_records: int = 5, for_dashboard: bool = False,
         logger.info(f"Limiting {len(data)} records to {max_records} for Chat Completion log")
     return data[:max_records]
 
-def orchestrator_flow(query: str, orchestrator: Agent, sql_agent, sql_tool, rag_tool, chat_completion_agent) -> dict:
+def orchestrator_flow(query: str, orchestrator: Agent, sql_agent, sql_tool, rag_agent, rag_tool, chat_completion_agent, thinking_queue=None) -> dict:
     metadata = load_metadata()
+    visualize_agent = create_visualize_agent()
     try:
         result = orchestrator.run(query)
         result_dict = process_response(result, "Orchestrator")
@@ -141,8 +144,11 @@ def orchestrator_flow(query: str, orchestrator: Agent, sql_agent, sql_tool, rag_
                     "logs": get_collected_logs()
                 }
             if agent_name == "text2sql_agent":
-                metadata_with_columns = data.copy()
-                metadata_with_columns["visualization_metadata"] = metadata["visualization_metadata"]
+                metadata_with_columns = {
+                    "tickers": data.get("tickers", []),
+                    "date_range": data.get("date_range"),
+                    "visualized_template": metadata["visualized_template"]
+                }
                 final_response = sql_flow(sub_query, sql_agent, sql_tool, metadata=metadata_with_columns)
                 response_for_chat = final_response["response_for_chat"]
                 actual_result = final_response["actual_result"]
@@ -159,18 +165,41 @@ def orchestrator_flow(query: str, orchestrator: Agent, sql_agent, sql_tool, rag_
         dashboard_enabled = data.get("Dashboard", False) and bool(actual_results and actual_results[0])
         dashboard_data = actual_results[0] if actual_results else []
         limited_dashboard_data = limit_records(dashboard_data, max_records=5, for_chat_input=True)
+        # Limit data for Visualize Agent
+        vis_dashboard_data = limit_records(dashboard_data, for_dashboard=True)
+
+        # Run Visualize Agent if dashboard is enabled
+        visualization_config = {}
+        if dashboard_enabled:
+            vis_input = {
+                "data": vis_dashboard_data,
+                "query": query
+            }
+            # Serialize vis_input to JSON string
+            vis_input_str = json.dumps(vis_input, ensure_ascii=False)
+            vis_response = visualize_agent.run(vis_input_str)
+            if isinstance(vis_response, RunResponse):
+                visualization_config = vis_response.content
+                if isinstance(visualization_config, str):
+                    visualization_config = json.loads(visualization_config)
+            else:
+                visualization_config = vis_response
+            logger.info(f"Visualize Agent config: {json.dumps(visualization_config, ensure_ascii=False)}")
+            if visualization_config.get("error"):
+                logger.error(f"Visualize Agent error: {visualization_config['error']}")
+                dashboard_enabled = False
+
         dashboard_info = {
             "enabled": dashboard_enabled,
             "data": limited_dashboard_data,
             "visualization": {
-                "type": data.get("vis_type", "none"),
-                "required_columns": data.get("required_columns", []),
-                "aggregation": data.get("aggregation", None),
-                "ui_requirements": data.get("ui_requirements", {})
+                "type": visualization_config.get("type", "none"),
+                "required_columns": visualization_config.get("required_columns", []),
+                "aggregation": None,
+                "ui_requirements": visualization_config if visualization_config.get("type") else {}
             }
         }
 
-        # Truyền dashboard_enabled vào chat_completion_flow
         final_response_message = chat_completion_flow(query, rag_documents, sql_response, dashboard_info, chat_completion_agent, tickers=data.get("tickers", []))
         logger.info(f"Final response message: {final_response_message}")
 
@@ -178,10 +207,10 @@ def orchestrator_flow(query: str, orchestrator: Agent, sql_agent, sql_tool, rag_
             "enabled": dashboard_enabled,
             "data": dashboard_data,
             "visualization": {
-                "type": data.get("vis_type", "none"),
-                "required_columns": data.get("required_columns", []),
-                "aggregation": data.get("aggregation", None),
-                "ui_requirements": data.get("ui_requirements", {})
+                "type": visualization_config.get("type", "none"),
+                "required_columns": visualization_config.get("required_columns", []),
+                "aggregation": None,
+                "ui_requirements": visualization_config if visualization_config.get("type") else {}
             }
         }
         final_response = {

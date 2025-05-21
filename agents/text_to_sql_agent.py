@@ -1,3 +1,4 @@
+# agents/text_to_sql_agent.py
 import os
 import sys
 from pathlib import Path
@@ -18,7 +19,7 @@ from utils.response import standardize_response
 logger = setup_logging()
 
 def load_metadata() -> dict:
-    """Đọc schema và visualization metadata."""
+    """Load database schema and visualized templates."""
     metadata = {
         "database_description": "Dow Jones Industrial Average (DJIA) companies database",
         "tables": {
@@ -66,48 +67,20 @@ def load_metadata() -> dict:
         ]
     }
 
-    vis_metadata_file = BASE_DIR / "config" / "visualization_metadata.yml"
+    vis_template_file = BASE_DIR / "config" / "visualized_template.yml"
     try:
-        with open(vis_metadata_file, "r") as file:
-            vis_metadata = yaml.safe_load(file)
-        logger.info("Successfully loaded visualization_metadata.yml")
-        metadata["visualization_metadata"] = vis_metadata["visualization_metadata"]
+        with open(vis_template_file, "r") as file:
+            vis_template = yaml.safe_load(file)
+        logger.info("Successfully loaded visualized_template.yml")
+        metadata["visualized_template"] = vis_template["visualized_template"]
     except FileNotFoundError:
-        logger.error("visualization_metadata.yml not found")
-        metadata["visualization_metadata"] = []
+        logger.error("visualized_template.yml not found")
+        metadata["visualized_template"] = []
     except Exception as e:
-        logger.error(f"Error loading visualization metadata: {str(e)}")
-        metadata["visualization_metadata"] = []
+        logger.error(f"Error loading visualized_template: {str(e)}")
+        metadata["visualized_template"] = []
 
     return metadata
-
-TOOLS_CONFIG = {
-    "text2sql_agent": {
-        "intents": [
-            "giá", "cổ phiếu", "stock", "mô tả", "description",
-            "market cap", "pe ratio", "dividend yield", "52 week high", "52 week low",
-            "volume", "dividends", "stock splits",
-            "sector", "industry", "country",
-            "highest price", "lowest price", "average price", "total volume", "average volume",
-            "highest volume", "weekly volume", "daily highlow range",
-            "time series", "histogram", "boxplot", "scatter plot", "bar chart", "pie chart", "heatmap",
-            "normal return"
-        ],
-        "sub_query_template": "{query}",
-        "description": "Queries database for stock prices or company info"
-    },
-    "rag_agent": {
-        "intents": [
-            "báo cáo", "tài chính", "doanh thu", "lợi nhuận", "chi phí", "tài sản", "nợ", "vốn", "cổ phần",
-            "doanh nghiệp", "kinh doanh", "chiến lược", "kết quả hoạt động", "tăng trưởng",
-            "report", "annual report", "financial statement", "balance sheet", "income statement", "cash flow",
-            "revenue", "profit", "expense", "assets", "liabilities", "equity", "shares",
-            "business", "strategy", "performance", "growth"
-        ],
-        "sub_query_template": "{query}",
-        "description": "Summarizes financial reports or documents"
-    }
-}
 
 metadata = load_metadata()
 SCHEMA = yaml.dump(
@@ -115,73 +88,60 @@ SCHEMA = yaml.dump(
     default_flow_style=False,
     sort_keys=False
 )
+vis_template_json = json.dumps(metadata["visualized_template"], ensure_ascii=False, indent=2)
 
 ERROR_MESSAGES = {
-    "missing_date": "Không tạo được câu SQL: thiếu thông tin thời gian",
-    "invalid_query": "Không tạo được câu SQL: truy vấn không hợp lệ",
-    "missing_template": "Không tạo được câu SQL: không tìm thấy template",
-    "invalid_columns": "Không tạo được câu SQL: cột không hợp lệ"
+    "missing_date": "Cannot generate SQL: missing date information",
+    "invalid_query": "Cannot generate SQL: invalid query",
+    "missing_template": "Cannot generate SQL: template not found",
+    "invalid_template": "Cannot generate SQL: invalid template configuration"
 }
 
 def create_text_to_sql_agent() -> Agent:
-    """Tạo Text2SQL Agent để phân tích truy vấn và chọn template SQL."""
+    """Create Text2SQL Agent to generate valid PostgreSQL queries."""
     logger.info("Creating Text2SQL Agent")
 
-    tools_config_json = json.dumps({"text2sql_agent": TOOLS_CONFIG["text2sql_agent"]}, ensure_ascii=False, indent=2)
     system_prompt = f"""
-You are Text2SQL Agent, generating plain SQL for a PostgreSQL financial database. Follow these steps to generate SQL queries based on the metadata. Return ONLY the SQL query or error message, no explanations, no markdown (e.g., avoid ```sql, ```json, or ```).
+You are Text2SQL Agent, generating valid PostgreSQL queries for a financial database. Your task is to select an SQL template from visualized templates based on the query and populate it with provided parameters to produce a syntactically correct query. Return ONLY the SQL query or an error message, no explanations, no markdown.
 
 - **Database Schema**:
 {SCHEMA}
 
+- **Visualized Templates**:
+{vis_template_json}
+
 - **Generate SQL**:
-  1. **Extract Metadata**:
-     - Extract template_name, tickers, date_range, and required_columns from metadata.
-     - Use template_name to find the corresponding SQL template in visualization_metadata.
+  1. **Select Template**:
+     - Match query with intent_keywords in visualized_template to select the appropriate template (e.g., 'average monthly price' matches 'bar_chart_monthly_price').
+     - If no template matches, return error: '{ERROR_MESSAGES["missing_template"]}'
 
-  2. **Validate Required Columns**:
-     - Check the required_columns (e.g., ['month', 'close_price']) from metadata.
-     - Ensure the SQL query returns EXACTLY these columns.
-     - If the template's SQL does not match required_columns, adjust the query:
-       - Example: If required_columns=['month', 'close_price'] but template returns 'date', modify to use TO_CHAR(date, 'YYYY-MM') AS month and GROUP BY month.
+  2. **Extract Metadata**:
+     - Use tickers and date_range from metadata.
+     - If no tickers, extract company name from query (e.g., 'Apple') and use LIKE clause.
+     - If no date_range, default to '2024-01-01' and '2024-12-31'.
 
-  3. **Adjust for Grouping**:
-     - If required_columns includes 'month' but template returns 'date', group the data by month:
-       - Use TO_CHAR(date, 'YYYY-MM') AS month in SELECT.
-       - Add GROUP BY TO_CHAR(date, 'YYYY-MM') to the query.
-       - Apply appropriate aggregation (e.g., AVG(close_price)) for other columns.
-     - Preserve other parts of the query (e.g., WHERE, ORDER BY) unless they conflict with grouping.
+  3. **Populate Template**:
+     - Replace placeholders in the template (e.g., {{ticker}}, {{start_date}}, {{end_date}}).
+     - For tickers, use uppercase (e.g., 'AAPL') and format as a comma-separated list if multiple (e.g., 'AAPL','MSFT').
 
-  4. **Check Schema**:
-     - Verify columns exist in schema.
-     - Use JOIN for columns not in target table (e.g., 'name' from 'companies').
-
-  5. **Handle Tickers**:
-     - Use metadata.tickers, uppercase (e.g., 'AAPL').
-     - If empty, query by company name with LIKE (e.g., '%Apple%') and JOIN.
-
-  6. **Handle Date Ranges**:
-     - Use BETWEEN for ranges.
-     - For missing data, use subquery for nearest prior date.
-
-  7. **Generate Query**:
-     - Start with the SQL template from visualization_metadata.
-     - Adjust the SELECT clause to match required_columns.
-     - Add GROUP BY if required (e.g., for 'month').
-     - Format single-line SQL with semicolon, no markdown or JSON formatting.
-     - Example: SELECT TO_CHAR(date, 'YYYY-MM') AS month, AVG(close_price) AS close_price FROM stock_prices WHERE symbol = 'DIS' AND date BETWEEN '2024-01-01' AND '2024-12-31' GROUP BY TO_CHAR(date, 'YYYY-MM') ORDER BY TO_CHAR(date, 'YYYY-MM');
+  4. **Ensure Syntax**:
+     - Format the query as a single line with a semicolon at the end.
+     - Remove excessive whitespace or newlines.
+     - Ensure the query is valid for PostgreSQL.
 
 - **Errors**:
   - Missing date: '{ERROR_MESSAGES["missing_date"]}'
   - Invalid query: '{ERROR_MESSAGES["invalid_query"]}'
   - Missing template: '{ERROR_MESSAGES["missing_template"]}'
-  - Invalid columns: '{ERROR_MESSAGES["invalid_columns"]}'
+  - Invalid template: '{ERROR_MESSAGES["invalid_template"]}'
 
 Examples:
-1. Metadata: template_name='daily_returns_boxplot', tickers=['AAPL'], date_range={{'start_date': '2024-01-01', 'end_date': '2024-12-31'}}, required_columns=['date', 'daily_return']
-   SQL: SELECT date, (close_price - LAG(close_price) OVER (PARTITION BY symbol ORDER BY date)) / LAG(close_price) OVER (PARTITION BY symbol ORDER BY date) AS daily_return FROM stock_prices WHERE symbol = 'AAPL' AND date BETWEEN '2024-01-01' AND '2024-12-31' ORDER BY date;
-2. Metadata: template_name='monthly_prices_boxplot', tickers=['DIS'], date_range={{'start_date': '2024-01-01', 'end_date': '2024-12-31'}}, required_columns=['month', 'close_price']
-   SQL: SELECT TO_CHAR(date, 'YYYY-MM') AS month, AVG(close_price) AS close_price FROM stock_prices WHERE symbol = 'DIS' AND date BETWEEN '2024-01-01' AND '2024-12-31' GROUP BY TO_CHAR(date, 'YYYY-MM') ORDER BY TO_CHAR(date, 'YYYY-MM');
+1. Query: 'Create a bar chart of Caterpillar (CAT) average monthly closing price in 2024'
+   Metadata: tickers=['CAT'], date_range={{'start_date': '2024-01-01', 'end_date': '2024-12-31'}}
+   SQL: SELECT EXTRACT(MONTH FROM date) AS month, AVG(close_price) AS avg_close_price FROM stock_prices WHERE symbol = 'CAT' AND date BETWEEN '2024-01-01' AND '2024-12-31' GROUP BY EXTRACT(MONTH FROM date) ORDER BY month;
+2. Query: 'Show company info for Microsoft'
+   Metadata: tickers=['MSFT']
+   SQL: SELECT symbol, name, sector, market_cap FROM companies WHERE symbol = 'MSFT';
 """
     return Agent(
         model=Groq(
@@ -189,74 +149,69 @@ Examples:
             api_key=GROQ_API_KEY,
             timeout=30,
             max_retries=5,
-            temperature=0.2,
-            max_tokens=1000,
+            temperature=0.6,
+            max_tokens=500,
             top_p=0.8
         ),
         system_prompt=system_prompt,
         custom_run=lambda self, sub_query, metadata=None: self.run_with_fallback(sub_query, metadata),
-        # debug_mode=True,
+        debug_mode=True,
     )
 
 def run_with_fallback(self, sub_query: str, metadata: dict = None) -> str:
     logger.info(f"Received sub_query: {sub_query}, metadata: {metadata}")
     try:
-        templates = metadata.get('visualization_metadata', [])
-        template_name = metadata.get('template_name', None)
+        templates = metadata.get('visualized_template', [])
         tickers = metadata.get('tickers', [])
         date_range = metadata.get('date_range', None)
-        required_columns = metadata.get('required_columns', [])
-        valid_columns = [col['name'] for table in metadata['tables'].values() for col in table['columns']] + [
-            'avg_volume', 'avg_close_price', 'high_low_range', 'proportion', 'count', 'total_dividends',
-            'name', 'daily_return', 'avg_daily_volume', 'avg_closing_price', 'month'
-        ]
 
-        if not template_name:
-            logger.error("Missing template_name in metadata")
-            return ERROR_MESSAGES["missing_template"]
-
+        # Select template based on query
         template = None
-        for vis_type_entry in templates:
-            for t in vis_type_entry['templates']:
-                if t['name'] == template_name:
+        query_lower = sub_query.lower()
+        for t in templates:
+            for keyword in t.get('intent_keywords', []):
+                if keyword in query_lower:
                     template = t
                     break
             if template:
                 break
 
         if not template:
-            logger.error(f"No template found for template_name: {template_name}")
+            logger.error("No template found for query")
             return ERROR_MESSAGES["missing_template"]
 
+        if 'sql' not in template:
+            logger.error(f"Invalid template configuration for {template['name']}")
+            return ERROR_MESSAGES["invalid_template"]
+
         params = {
-            'ticker': tickers[0] if tickers else '',
-            'tickers': ','.join(f"'{t}'" for t in tickers) if tickers else '',
+            'ticker': tickers[0].upper() if tickers else '',
+            'tickers': ','.join(f"'{t.upper()}'" for t in tickers) if tickers else '',
             'start_date': date_range['start_date'] if date_range else '2024-01-01',
             'end_date': date_range['end_date'] if date_range else '2024-12-31',
         }
 
-        sql_query = template['sql'].format(**params)
-        sql_query = re.sub(r'[\n\r\t]+', ' ', sql_query).strip()
+        # Handle case where no tickers are provided
+        if not tickers and '{ticker}' in template['sql']:
+            company_name = query_lower
+            company_match = re.search(r'(apple|microsoft|boeing|caterpillar|...)', company_name)
+            if company_match:
+                params['ticker'] = f"%{company_match.group(0)}%"
+                sql_query = template['sql'].replace("symbol = '{ticker}'", "name LIKE '{ticker}'")
+            else:
+                logger.error("No company name or ticker provided")
+                return ERROR_MESSAGES["invalid_query"]
+        else:
+            sql_query = template['sql'].format(**params)
+
+        # Format SQL: remove excessive whitespace, ensure semicolon
+        sql_query = re.sub(r'\s+', ' ', sql_query).strip()
         if not sql_query.endswith(';'):
             sql_query += ';'
-
-        # Điều chỉnh SELECT clause khi vis_type là null
-        if metadata.get('vis_type') is None:
-            stock_prices_columns = [col['name'] for col in metadata['tables']['stock_prices']['columns']]
-            if all(col in stock_prices_columns for col in required_columns):
-                select_match = re.search(r'SELECT\s+(.*?)\s+FROM', sql_query, re.IGNORECASE)
-                if select_match:
-                    current_select = select_match.group(1)
-                    new_select = ', '.join(required_columns)
-                    sql_query = sql_query.replace(current_select, new_select)
-                    logger.info(f"Adjusted SQL for vis_type null: {sql_query}")
-            else:
-                logger.error(f"Required columns {required_columns} not all in stock_prices columns")
-                return "Không tạo được câu SQL: cột yêu cầu không hợp lệ cho truy vấn đơn giản"
 
         logger.info(f"Generated SQL: {sql_query}")
         return sql_query
 
     except Exception as e:
         logger.error(f"Error: {str(e)}")
-        return f"Không tạo được câu SQL: {str(e)}"
+        return f"Cannot generate SQL: {str(e)}"

@@ -46,18 +46,8 @@ def sql_flow(sub_query: str, sql_agent, sql_tool, metadata: dict = None) -> dict
                 "response_for_chat": "Dữ liệu trả về không hợp lệ từ cơ sở dữ liệu.",
                 "actual_result": []
             }
-        
-        required_columns = metadata.get("required_columns", [])
-        dashboard_enabled = metadata.get("Dashboard", False)
-        if required_columns and result_data and dashboard_enabled:  # Chỉ kiểm tra khi Dashboard là true
-            for record in result_data:
-                if not all(col in record for col in required_columns):
-                    logger.error(f"Result data missing required columns: {required_columns}")
-                    return {
-                        "response_for_chat": f"Dữ liệu trả về thiếu cột yêu cầu: {required_columns}",
-                        "actual_result": []
-                    }
 
+        # Bỏ qua validate required_columns, cứ có dữ liệu là trả về
         response_for_chat = (
             f"Dữ liệu từ cơ sở dữ liệu cho truy vấn '{sub_query}': {json.dumps(result_data, ensure_ascii=False)}"
             if result_data

@@ -86,22 +86,22 @@ You are Chat Completion Agent, answering the user's query based on summarized da
 
 5. Summarize:
    - Answer the query in 1-2 sentences.
-   - Summarize the data in 3-4 sentences, referencing the RAG, SQL, and Dashboard summaries.
-   - Enhance visualization summary using Dashboard Summary (e.g., if it mentions 'daily_return theo tháng', elaborate on the trend or key insights).
+   - Summarize the main finding in 1-2 sentences, focusing ONLY on the answer to the query. Do NOT include additional information about RAG, SQL, or Dashboard availability.
+   - Do NOT mention lack of data (e.g., 'Không có tài liệu RAG để phân tích thêm') in the summary.
 
 6. Output:
    - Plain text (not Markdown) with answer and summary:
      - Answer: [Direct answer to the query].
-     - Summary: [3-4 sentences summarizing the data].
+     - Summary: [1-2 sentences summarizing the main finding].
 
-Example: Query: 'Create a boxplot of daily returns for Apple in 2024'
+Example: Query: 'What was the standard deviation of Apple’s daily closing prices in 2024?'
 Tickers: ["AAPL"]
 RAG Summary:\nKhông có tài liệu liên quan đến báo cáo tài chính.
-SQL Summary:\nAAPL Daily Returns: Trung bình -0.0020
-Dashboard Summary:\nBiểu đồ boxplot thể hiện sự biến động của daily_return theo tháng.
+SQL Summary:\nStddev: 25.502992535138464
+Dashboard Summary:\nKhông có dữ liệu biểu đồ.
 Output:
-Answer: Biểu đồ boxplot thể hiện sự biến động của daily_return của Apple trong năm 2024.
-Summary: Dữ liệu từ cơ sở dữ liệu cho thấy lợi nhuận hàng ngày trung bình của Apple là -0.0020 trong năm 2024. Biểu đồ boxplot trực quan hóa sự biến động của daily_return theo tháng, cho thấy các tháng có biến động lớn. Không có tài liệu RAG để phân tích thêm.
+Answer: Độ lệch chuẩn của giá đóng cửa hàng ngày của Apple trong năm 2024 là 25.50 USD.
+Summary: Độ lệch chuẩn của giá đóng cửa hàng ngày của Apple trong năm 2024 được tính là 25.50 USD.
 """
     return Agent(
         model=Groq(

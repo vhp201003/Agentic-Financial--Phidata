@@ -7,7 +7,7 @@ sys.path.append(str(BASE_DIR))
 # Configuration settings for the Financial AI Agent
 
 # API configuration
-API_URL = "http://localhost:8000"
+API_URL = "http://localhost:8010"
 
 # Agent endpoint mapping
 AGENT_ENDPOINTS = {

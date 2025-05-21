@@ -1,0 +1,95 @@
+visualized_template:
+  - name: "daily_closing_price_time_series"
+    description: "Time series of closing prices for a company within a date range"
+    required_columns: ["date", "close_price"]
+    sql: "SELECT date, close_price FROM stock_prices WHERE symbol = '{ticker}' AND date BETWEEN '{start_date}' AND '{end_date}' ORDER BY date;"
+    intent_keywords: ["time series", "stock price"]
+
+  - name: "daily_closing_price_with_rolling_avg"
+    description: "Time series of closing prices with 30-day rolling average for a company within a date range"
+    required_columns: ["date", "close_price", "rolling_avg"]
+    sql: "SELECT date, close_price, AVG(close_price) OVER (ORDER BY date ROWS BETWEEN 29 PRECEDING AND CURRENT ROW) AS rolling_avg FROM stock_prices WHERE symbol = '{ticker}' AND date BETWEEN '{start_date}' AND '{end_date}' ORDER BY date;"
+    intent_keywords: ["time series", "stock price", "rolling average", "moving average"]
+
+  - name: "time_series_volume"
+    description: "Time series of trading volume for a company within a date range"
+    required_columns: ["date", "volume"]
+    sql: "SELECT date, volume FROM stock_prices WHERE symbol = '{ticker}' AND date BETWEEN '{start_date}' AND '{end_date}' ORDER BY date;"
+    intent_keywords: ["trading volume", "volume", "daily trading volume"]
+
+  - name: "company_info"
+    description: "Retrieve company information"
+    required_columns: ["symbol", "name", "sector", "market_cap"]
+    sql: "SELECT symbol, name, sector, market_cap FROM companies WHERE symbol = '{ticker}';"
+    intent_keywords: ["company info", "description"]
+
+  - name: "single_value"
+    description: "Retrieve a single value (e.g., closing price on a specific date)"
+    required_columns: ["date", "close_price"]
+    sql: "SELECT date, close_price FROM stock_prices WHERE symbol = '{ticker}' AND date = '{start_date}';"
+    intent_keywords: ["closing price", "price on"]
+
+  - name: "bar_chart_price"
+    description: "Average closing price by symbol within a date range"
+    required_columns: ["symbol", "avg_close_price"]
+    sql: "SELECT symbol, AVG(close_price) AS avg_close_price FROM stock_prices WHERE date BETWEEN '{start_date}' AND '{end_date}' GROUP BY symbol ORDER BY avg_close_price;"
+    intent_keywords: ["average price by symbol", "bar chart"]
+
+  - name: "bar_chart_monthly_price"
+    description: "Average monthly closing price for a company within a date range"
+    required_columns: ["month", "avg_close_price"]
+    sql: "SELECT EXTRACT(MONTH FROM date) AS month, AVG(close_price) AS avg_close_price FROM stock_prices WHERE symbol = '{ticker}' AND date BETWEEN '{start_date}' AND '{end_date}' GROUP BY EXTRACT(MONTH FROM date) ORDER BY month;"
+    intent_keywords: ["average monthly price", "monthly closing price", "bar chart"]
+
+  - name: "pie_chart_proportion"
+    description: "Market cap proportions by sector"
+    required_columns: ["sector", "proportion"]
+    sql: "SELECT sector, SUM(market_cap) / (SELECT SUM(market_cap) FROM companies) * 100 AS proportion FROM companies GROUP BY sector ORDER BY proportion DESC LIMIT 5;"
+    intent_keywords: ["proportions", "market cap by sector"]
+
+  - name: "pie_chart_count"
+    description: "Distribution of companies by sector with count"
+    required_columns: ["sector", "count"]
+    sql: "SELECT sector, COUNT(*) AS count FROM companies GROUP BY sector ORDER BY count DESC LIMIT 5;"
+    intent_keywords: ["distribution", "count by sector"]
+
+  - name: "daily_returns_histogram"
+    description: "Daily returns for a company within a date range for histogram"
+    required_columns: ["daily_return"]
+    sql: "SELECT (close_price - LAG(close_price) OVER (PARTITION BY symbol ORDER BY date)) / LAG(close_price) OVER (PARTITION BY symbol ORDER BY date) AS daily_return FROM stock_prices WHERE symbol = '{ticker}' AND date BETWEEN '{start_date}' AND '{end_date}';"
+    intent_keywords: ["daily returns", "returns", "histogram"]
+
+  - name: "daily_returns_boxplot"
+    description: "Daily returns for a company within a date range for boxplot"
+    required_columns: ["date", "daily_return"]
+    sql: "SELECT date, (close_price - LAG(close_price) OVER (PARTITION BY symbol ORDER BY date)) / LAG(close_price) OVER (PARTITION BY symbol ORDER BY date) AS daily_return FROM stock_prices WHERE symbol = '{ticker}' AND date BETWEEN '{start_date}' AND '{end_date}' ORDER BY date;"
+    intent_keywords: ["daily returns", "returns", "boxplot"]
+
+  - name: "monthly_prices_boxplot"
+    description: "Monthly closing prices for a company within a date range"
+    required_columns: ["month", "close_price"]
+    sql: "SELECT TO_CHAR(date, 'YYYY-MM') AS month, close_price FROM stock_prices WHERE symbol = '{ticker}' AND date BETWEEN '{start_date}' AND '{end_date}' ORDER BY date;"
+    intent_keywords: ["monthly prices", "prices", "boxplot"]
+
+  - name: "scatter_volume_price"
+    description: "Average daily volume vs closing price for companies within a date range"
+    required_columns: ["avg_daily_volume", "avg_closing_price"]
+    sql: "SELECT symbol, AVG(volume) AS avg_daily_volume, AVG(close_price) AS avg_closing_price FROM stock_prices WHERE date BETWEEN '{start_date}' AND '{end_date}' GROUP BY symbol ORDER BY avg_daily_volume, avg_closing_price;"
+    intent_keywords: ["daily volume", "volume vs price", "scatter"]
+
+  - name: "heatmap_returns"
+    description: "Correlation of daily returns between companies"
+    required_columns: ["symbol1_return", "symbol2_return"]
+    sql: "SELECT symbol, (close_price - LAG(close_price) OVER (PARTITION BY symbol ORDER BY date)) / LAG(close_price) OVER (PARTITION BY symbol ORDER BY date) AS daily_return FROM stock_prices WHERE symbol IN ({tickers}) AND date BETWEEN '{start_date}' AND '{end_date}';"
+    intent_keywords: ["correlation", "heatmap", "returns"]
+
+  - name: "scatter_market_cap_pe"
+    description: "Market capitalization versus P/E ratio for companies"
+    required_columns: ["market_cap", "pe_ratio", "symbol"]
+    sql: "SELECT symbol, market_cap, pe_ratio FROM companies;"
+    intent_keywords: ["market capitalization", "p/e ratio", "scatter"]
+  - name: "bar_chart_market_cap"
+    description: "Top 10 companies by market capitalization"
+    required_columns: ["symbol", "market_cap"]
+    sql: "SELECT symbol, market_cap FROM companies ORDER BY market_cap DESC LIMIT 10;"
+    intent_keywords: ["market capitalization", "top companies", "bar chart"]
