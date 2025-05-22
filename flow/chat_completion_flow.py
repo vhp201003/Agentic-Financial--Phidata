@@ -22,12 +22,40 @@ def prepare_rag_summary(rag_documents: list, config: dict) -> str:
         return config['formatting']['rag']['empty_message']['vi']
 
     rag_by_company = {}
+    # Regex để tìm các chỉ số tài chính kèm năm (ví dụ: "Net revenue FY 2022: $29,310")
+    financial_metrics_pattern = re.compile(r'(Net revenue|Net income|Operating expenses|Diluted.*earnings per share|Total volume|Payments volume|Transactions processed)\s*(FY\s*\d{4})?\s*[:=]?\s*\$?([\d,.]+[TBM]?|\d+\.\d+[TBM]?)', re.IGNORECASE)
+
     for doc in rag_documents:
         company = doc['company']
         if company not in rag_by_company:
             rag_by_company[company] = []
-        content = doc['document'][:200] + ("..." if len(doc['document']) > 200 else "")
-        rag_by_company[company].append(f"{company}: {content} from {doc['filename']}")
+        
+        # Trích xuất các chỉ số tài chính
+        content = doc['document']
+        metrics = financial_metrics_pattern.findall(content)
+        
+        # Nhóm dữ liệu theo năm
+        metrics_by_year = {}
+        for metric, year, value in metrics:
+            year = year.strip() if year else "Unknown Year"
+            if year not in metrics_by_year:
+                metrics_by_year[year] = []
+            # Chuẩn hóa giá trị: loại bỏ dấu phẩy và ký tự không cần thiết
+            value = value.replace(',', '').replace('$', '')
+            metrics_by_year[year].append(f"{metric}: {value}")
+        
+        # Định dạng lại metrics theo năm
+        formatted_metrics = []
+        for year, metric_list in metrics_by_year.items():
+            formatted_metrics.append(f"{year}: {', '.join(metric_list)}")
+        
+        # Nếu không tìm thấy chỉ số, lấy tối đa 1000 ký tự
+        if not formatted_metrics:
+            content = content[:1000] + ("..." if len(content) > 1000 else "")
+            formatted_metrics = [content]
+        
+        rag_by_company[company].append(f"{company}: {'; '.join(formatted_metrics)} from {doc['filename']}")
+
     return "\n".join(f"{company}: " + "; ".join(entries) for company, entries in rag_by_company.items())
 
 def prepare_dashboard_summary(dashboard_info: dict, config: dict) -> str:
@@ -135,6 +163,14 @@ def chat_completion_flow(query: str, rag_documents: list, sql_response: str, das
         has_sql_data = sql_summary != config['formatting']['sql']['empty_message']['vi']
         has_dashboard_data = dashboard_summary != config['formatting']['dashboard']['empty_message']['vi']
         has_data = has_rag_data or has_sql_data or has_dashboard_data
+
+        # Nếu RAG có dữ liệu, kiểm tra xem có đủ thông tin để phân tích không
+        if has_rag_data:
+            # Kiểm tra xem RAG Summary có chứa dữ liệu đa năm không
+            years_pattern = re.compile(r'FY\s*\d{4}')
+            years_found = years_pattern.findall(rag_summary)
+            if len(set(years_found)) < 2:
+                logger.warning("RAG Summary contains data for less than 2 years, trend analysis may be limited.")
 
         chat_input = (
             f"Query: {query}\n"
