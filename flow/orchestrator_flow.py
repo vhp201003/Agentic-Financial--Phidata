@@ -32,42 +32,34 @@ def load_metadata() -> dict:
         metadata["visualized_template"] = []
     return metadata
 
-def process_response(response: any, context: str) -> dict:
-    """Process response, log token metrics, and return JSON dict."""
+def process_response(response: any, context: str) -> tuple[dict, dict]:
+    """Process response, extract token metrics, and return JSON dict with metrics."""
+    token_metrics = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
     try:
         if isinstance(response, RunResponse):
             metrics = getattr(response, 'metrics', {})
-            input_tokens = metrics.get('input_tokens', 0)
-            output_tokens = metrics.get('output_tokens', 0)
-            total_tokens = metrics.get('total_tokens', input_tokens + output_tokens)
-            logger.info(f"[{context}] Token metrics: Input tokens={input_tokens}, Output tokens={output_tokens}, Total tokens={total_tokens}")
+            token_metrics["input_tokens"] = metrics.get('input_tokens', 0)
+            token_metrics["output_tokens"] = metrics.get('output_tokens', 0)
+            token_metrics["total_tokens"] = metrics.get('total_tokens', token_metrics["input_tokens"] + token_metrics["output_tokens"])
+            logger.info(f"[{context}] Token metrics: Input tokens={token_metrics['input_tokens']}, Output tokens={token_metrics['output_tokens']}, Total tokens={token_metrics['total_tokens']}")
             response_content = response.content
         else:
             response_content = response
 
         if isinstance(response_content, dict):
             logger.info(f"[{context}] Response is already JSON: {json.dumps(response_content, ensure_ascii=False)}")
-            return response_content
+            return response_content, token_metrics
         elif not isinstance(response_content, str):
             logger.warning(f"[{context}] Unexpected result type: {type(response_content)}")
-            return standardize_response("error", "Sorry, the system cannot parse your query. Please try again with a different query.", {})
+            return standardize_response("error", "Sorry, the system cannot parse your query. Please try again with a different query.", {}), token_metrics
 
         cleaned_content = re.sub(r'```(?:json|sql)?|```|\n|\t', '', response_content).strip()
         logger.debug(f"[{context}] Cleaned response content: {cleaned_content}")
-        return parse_response_to_json(cleaned_content, context)
+        return parse_response_to_json(cleaned_content, context), token_metrics
 
     except Exception as e:
         logger.error(f"[{context}] Error processing response: {str(e)}")
-        return standardize_response("error", "Sorry, the system cannot parse your query. Please try again with a different query.", {})
-
-def limit_lines(text: str, max_lines: int = 5) -> str:
-    """Limit the number of lines in text to max_lines."""
-    lines = text.split("\n")
-    if len(lines) > max_lines:
-        limited_lines = lines[:max_lines]
-        limited_lines.append("... (content truncated to avoid exceeding limit)")
-        return "\n".join(limited_lines)
-    return text
+        return standardize_response("error", "Sorry, the system cannot parse your query. Please try again with a different query.", {}), token_metrics
 
 def limit_sql_records(sql_response: str, max_records: int = 5) -> str:
     """Limit the number of records in SQL response."""
@@ -94,37 +86,59 @@ def limit_sql_records(sql_response: str, max_records: int = 5) -> str:
         return sql_response
 
 def limit_records(data: list, max_records: int = 5, for_dashboard: bool = False, for_chat_input: bool = False) -> list:
-    """Limit the number of records in the data list."""
+    """Limit the number of records in the data list for specific purposes."""
     if not isinstance(data, list):
         logger.error(f"Expected list for limiting records, got {type(data)}")
         return []
+    
     if for_dashboard:
-        max_dashboard_records = 1000
+        max_dashboard_records = 10  # Reduced for Visualize Agent
+        # Limit to max 5 companies
+        if data and 'symbol' in data[0]:
+            unique_symbols = list(dict.fromkeys([record['symbol'] for record in data]))
+            filtered_data = [record for record in data if record['symbol'] in unique_symbols]
+            if len(filtered_data) > max_dashboard_records:
+                logger.info(f"Limiting {len(filtered_data)} dashboard records to {max_dashboard_records} for Visualize Agent")
+                return filtered_data[:max_dashboard_records]
+            return filtered_data
         if len(data) > max_dashboard_records:
-            logger.info(f"Limiting {len(data)} dashboard records to {max_dashboard_records}")
+            logger.info(f"Limiting {len(data)} dashboard records to {max_dashboard_records} for Visualize Agent")
             return data[:max_dashboard_records]
         return data
-    if len(data) <= max_records:
-        return data
+    
     if for_chat_input:
-        logger.info(f"Limiting {len(data)} records to {max_records} for chat input to avoid token limit")
-    else:
-        logger.info(f"Limiting {len(data)} records to {max_records} for Chat Completion log")
-    return data[:max_records]
+        if len(data) > max_records:
+            logger.info(f"Limiting {len(data)} records to {max_records} for Chat Completion Agent")
+            return data[:max_records]
+        return data
+    
+    return data  # No limit for other cases
 
-def orchestrator_flow(query: str, orchestrator: Agent, sql_agent, sql_tool, rag_agent, rag_tool, chat_completion_agent, thinking_queue=None) -> dict:
+def orchestrator_flow(query: str, orchestrator: Agent, sql_agent, sql_tool, rag_tool, chat_completion_agent, thinking_queue=None) -> dict:
     metadata = load_metadata()
     visualize_agent = create_visualize_agent()
+    
+    # Initialize token metrics dictionary
+    token_metrics = {
+        "orchestrator": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+        "text2sql": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+        "visualize": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+        "chat_completion": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+    }
+    
     try:
-        result = orchestrator.run(query)
-        result_dict = process_response(result, "Orchestrator")
+        # Process Orchestrator response
+        result, token_metrics["orchestrator"] = process_response(orchestrator.run(query), "Orchestrator")
+        result_dict = result
         logger.info(f"Orchestrator Response: {json.dumps(result_dict, indent=2, ensure_ascii=False)}")
 
         if result_dict.get("status") == "error":
             return {
                 "status": "error",
                 "message": "Sorry, the system cannot parse your query. Please try again with a different query, e.g., 'Stock price of Apple on 01/01/2025'.",
-                "data": {},
+                "data": {
+                    "token_metrics": token_metrics
+                },
                 "logs": get_collected_logs()
             }
 
@@ -140,7 +154,9 @@ def orchestrator_flow(query: str, orchestrator: Agent, sql_agent, sql_tool, rag_
                 return {
                     "status": "error",
                     "message": "Sorry, the system cannot process your request. Please try again with a different request.",
-                    "data": {},
+                    "data": {
+                        "token_metrics": token_metrics
+                    },
                     "logs": get_collected_logs()
                 }
             if agent_name == "text2sql_agent":
@@ -153,11 +169,14 @@ def orchestrator_flow(query: str, orchestrator: Agent, sql_agent, sql_tool, rag_
                 response_for_chat = final_response["response_for_chat"]
                 actual_result = final_response["actual_result"]
                 sql_response = limit_sql_records(response_for_chat, max_records=5)
-                dashboard_result = limit_records(actual_result, for_dashboard=True)
+                dashboard_result = actual_result
                 limited_result = limit_records(actual_result, max_records=5, for_dashboard=False)
                 logger.info(f"SQL Response (limited for log): {sql_response}")
                 logger.info(f"Dashboard records: {len(dashboard_result)}, Limited log records: {len(limited_result)}")
                 actual_results.append(dashboard_result)
+                # Assuming sql_flow returns metrics (needs adjustment in sql_flow.py)
+                token_metrics["text2sql"] = final_response.get("token_metrics", {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0})
+
             elif agent_name == "rag_agent":
                 rag_documents = rag_flow(sub_query, rag_tool)
                 logger.info(f"RAG Documents: {rag_documents}")
@@ -182,6 +201,12 @@ def orchestrator_flow(query: str, orchestrator: Agent, sql_agent, sql_tool, rag_
                 visualization_config = vis_response.content
                 if isinstance(visualization_config, str):
                     visualization_config = json.loads(visualization_config)
+                # Extract token metrics from Visualize Agent
+                metrics = getattr(vis_response, 'metrics', {})
+                token_metrics["visualize"]["input_tokens"] = metrics.get('input_tokens', 0)
+                token_metrics["visualize"]["output_tokens"] = metrics.get('output_tokens', 0)
+                token_metrics["visualize"]["total_tokens"] = metrics.get('total_tokens', token_metrics["visualize"]["input_tokens"] + token_metrics["visualize"]["output_tokens"])
+                logger.info(f"[Visualize] Token metrics: Input tokens={token_metrics['visualize']['input_tokens']}, Output tokens={token_metrics['visualize']['output_tokens']}, Total tokens={token_metrics['visualize']['total_tokens']}")
             else:
                 visualization_config = vis_response
             logger.info(f"Visualize Agent config: {json.dumps(visualization_config, ensure_ascii=False)}")
@@ -201,11 +226,14 @@ def orchestrator_flow(query: str, orchestrator: Agent, sql_agent, sql_tool, rag_
         }
 
         final_response_message = chat_completion_flow(query, rag_documents, sql_response, dashboard_info, chat_completion_agent, tickers=data.get("tickers", []))
-        logger.info(f"Final response message: {final_response_message}")
+        # Assuming chat_completion_flow returns metrics (needs adjustment in chat_completion_flow.py)
+        final_response_message_dict = final_response_message if isinstance(final_response_message, dict) else {"content": final_response_message}
+        token_metrics["chat_completion"] = final_response_message_dict.get("token_metrics", {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0})
+        logger.info(f"Final response message: {final_response_message_dict.get('content', final_response_message)}")
 
         final_dashboard_info = {
             "enabled": dashboard_enabled,
-            "data": dashboard_data,
+            "data": dashboard_data,  # Đầy đủ record cho UI
             "visualization": {
                 "type": visualization_config.get("type", "none"),
                 "required_columns": visualization_config.get("required_columns", []),
@@ -215,10 +243,11 @@ def orchestrator_flow(query: str, orchestrator: Agent, sql_agent, sql_tool, rag_
         }
         final_response = {
             "status": "success",
-            "message": final_response_message if isinstance(final_response_message, str) else "No response available.",
+            "message": final_response_message_dict.get("content", "No response available."),
             "data": {
-                "result": final_response_message if isinstance(final_response_message, str) else "No response available.",
-                "dashboard": final_dashboard_info
+                "result": final_response_message_dict.get("content", "No response available."),
+                "dashboard": final_dashboard_info,
+                "token_metrics": token_metrics
             },
             "logs": get_collected_logs()
         }
@@ -229,6 +258,8 @@ def orchestrator_flow(query: str, orchestrator: Agent, sql_agent, sql_tool, rag_
         return {
             "status": "error",
             "message": "Sorry, the system cannot process your request. Please try again with a different request.",
-            "data": {},
+            "data": {
+                "token_metrics": token_metrics
+            },
             "logs": get_collected_logs()
         }

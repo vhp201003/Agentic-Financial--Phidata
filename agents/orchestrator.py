@@ -45,43 +45,22 @@ TOOLS_CONFIG = {
 }
 
 def load_metadata() -> dict:
-    """Load database schema."""
-    metadata = {
-        "database_description": "DJIA companies database",
-        "tables": {
-            "companies": {
-                "columns": [
-                    {"name": "symbol", "type": "VARCHAR(10)"},
-                    {"name": "name", "type": "VARCHAR(255)"},
-                    {"name": "sector", "type": "VARCHAR(100)"},
-                    {"name": "industry", "type": "VARCHAR(100)"},
-                    {"name": "country", "type": "VARCHAR(100)"},
-                    {"name": "website", "type": "VARCHAR(255)"},
-                    {"name": "market_cap", "type": "DECIMAL(15,2)"},
-                    {"name": "pe_ratio", "type": "DECIMAL(10,2)"},
-                    {"name": "dividend_yield", "type": "DECIMAL(5,2)"},
-                    {"name": "week_high_52", "type": "DECIMAL(10,2)"},
-                    {"name": "week_low_52", "type": "DECIMAL(10,2)"},
-                    {"name": "description", "type": "TEXT"}
-                ]
-            },
-            "stock_prices": {
-                "columns": [
-                    {"name": "id", "type": "SERIAL"},
-                    {"name": "symbol", "type": "VARCHAR(10)"},
-                    {"name": "date", "type": "DATE"},
-                    {"name": "close_price", "type": "DECIMAL(10,2)"},
-                    {"name": "volume", "type": "BIGINT"},
-                    {"name": "high_price", "type": "DECIMAL(10,2)"},
-                    {"name": "low_price", "type": "DECIMAL(10,2)"}
-                ]
-            }
-        }
-    }
-    return metadata
+    """Load database schema from metadata_db.yml."""
+    metadata_file = BASE_DIR / "config" / "metadata_db.yml"
+    try:
+        with open(metadata_file, "r") as file:
+            metadata = yaml.safe_load(file)
+        logger.info("Successfully loaded metadata_db.yml")
+        return metadata
+    except FileNotFoundError:
+        logger.error("metadata_db.yml not found")
+        return {}
+    except Exception as e:
+        logger.error(f"Error loading metadata_db.yml: {str(e)}")
+        return {}
 
 metadata = load_metadata()
-schema = yaml.dump({k: v for k, v in metadata.items() if k in ["database_description", "tables"]}, default_flow_style=False, sort_keys=False)
+schema = yaml.dump({k: v for k, v in metadata.items() if k in ["database_description", "tables", "relationships"]}, default_flow_style=False, sort_keys=False)
 
 def create_orchestrator():
     tools_config_json = json.dumps(TOOLS_CONFIG, ensure_ascii=False, indent=2)

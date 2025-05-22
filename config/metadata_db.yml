@@ -1,6 +1,4 @@
-```yaml
 database_description: Dow Jones Industrial Average (DJIA) companies database
-
 tables:
   companies:
     description: Contains basic company information and metrics

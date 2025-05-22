@@ -19,54 +19,23 @@ from utils.response import standardize_response
 logger = setup_logging()
 
 def load_metadata() -> dict:
-    """Load database schema and visualized templates."""
-    metadata = {
-        "database_description": "Dow Jones Industrial Average (DJIA) companies database",
-        "tables": {
-            "companies": {
-                "description": "Contains basic company information and metrics",
-                "columns": [
-                    {"name": "symbol", "type": "VARCHAR(10)", "constraints": "PRIMARY KEY", "description": "Stock ticker symbol (e.g., 'AAPL')"},
-                    {"name": "name", "type": "VARCHAR(255)", "description": "Full name of the company (e.g., 'Apple Inc.')"},
-                    {"name": "sector", "type": "VARCHAR(100)", "description": "Economic sector classification (e.g., 'Technology')"},
-                    {"name": "industry", "type": "VARCHAR(100)", "description": "Specific industry within sector (e.g., 'Consumer Electronics')"},
-                    {"name": "country", "type": "VARCHAR(100)", "description": "Country where company is headquartered (e.g., 'United States')"},
-                    {"name": "website", "type": "VARCHAR(255)", "description": "Company's official website URL"},
-                    {"name": "market_cap", "type": "BIGINT", "description": "Market capitalization value in USD"},
-                    {"name": "pe_ratio", "type": "DECIMAL(10,2)", "description": "Price-to-earnings ratio"},
-                    {"name": "dividend_yield", "type": "DECIMAL(5,2)", "description": "Annual dividend yield percentage"},
-                    {"name": "week_high_52", "type": "DECIMAL(10,2)", "description": "Highest stock price in the last 52 weeks"},
-                    {"name": "week_low_52", "type": "DECIMAL(10,2)", "description": "Lowest stock price in the last 52 weeks"},
-                    {"name": "description", "type": "TEXT", "description": "Detailed company description"}
-                ]
-            },
-            "stock_prices": {
-                "description": "Contains historical price information for stocks",
-                "columns": [
-                    {"name": "id", "type": "SERIAL", "constraints": "PRIMARY KEY", "description": "Unique identifier"},
-                    {"name": "symbol", "type": "VARCHAR(10)", "constraints": "FOREIGN KEY referencing companies.symbol", "description": "Stock ticker symbol"},
-                    {"name": "date", "type": "DATE", "description": "Date of the price record (YYYY-MM-DD)"},
-                    {"name": "open_price", "type": "DECIMAL(10,2)", "description": "Opening price for the day"},
-                    {"name": "high_price", "type": "DECIMAL(10,2)", "description": "Highest price during the day"},
-                    {"name": "low_price", "type": "DECIMAL(10,2)", "description": "Lowest price during the day"},
-                    {"name": "close_price", "type": "DECIMAL(10,2)", "description": "Closing price for the day"},
-                    {"name": "volume", "type": "BIGINT", "description": "Trading volume for the day"},
-                    {"name": "dividends", "type": "DECIMAL(10,2)", "description": "Dividends paid"},
-                    {"name": "stock_splits", "type": "DECIMAL(10,2)", "description": "Stock split ratio"}
-                ]
-            }
-        },
-        "relationships": [
-            {
-                "name": "companies_to_stock_prices",
-                "type": "one-to-many",
-                "description": "One company can have many price records",
-                "from": {"table": "companies", "column": "symbol"},
-                "to": {"table": "stock_prices", "column": "symbol"}
-            }
-        ]
-    }
+    """Load database schema from metadata_db.yml and visualized templates from visualized_template.yml."""
+    metadata = {}
+    
+    # Load database schema
+    metadata_file = BASE_DIR / "config" / "metadata_db.yml"
+    try:
+        with open(metadata_file, "r") as file:
+            metadata = yaml.safe_load(file)
+        logger.info("Successfully loaded metadata_db.yml")
+    except FileNotFoundError:
+        logger.error("metadata_db.yml not found")
+        return {}
+    except Exception as e:
+        logger.error(f"Error loading metadata_db.yml: {str(e)}")
+        return {}
 
+    # Load visualized templates
     vis_template_file = BASE_DIR / "config" / "visualized_template.yml"
     try:
         with open(vis_template_file, "r") as file:
@@ -88,7 +57,7 @@ SCHEMA = yaml.dump(
     default_flow_style=False,
     sort_keys=False
 )
-vis_template_json = json.dumps(metadata["visualized_template"], ensure_ascii=False, indent=2)
+vis_template_json = json.dumps(metadata.get("visualized_template", []), ensure_ascii=False, indent=2)
 
 ERROR_MESSAGES = {
     "missing_date": "Cannot generate SQL: missing date information",
@@ -193,13 +162,23 @@ def run_with_fallback(self, sub_query: str, metadata: dict = None) -> str:
 
         # Handle case where no tickers are provided
         if not tickers and '{ticker}' in template['sql']:
-            company_name = query_lower
-            company_match = re.search(r'(apple|microsoft|boeing|caterpillar|...)', company_name)
+            company_name = query_lower.replace('.', '').replace(',', '').replace('the ', '')
+            # Danh sách công ty ngắn gọn cho regex
+            company_names = [
+                'apple', 'amgen', 'american express', 'boeing', 'caterpillar', 'salesforce',
+                'cisco', 'chevron', 'disney', 'dow', 'goldman sachs', 'home depot',
+                'honeywell', 'ibm', 'intel', 'johnson & johnson', 'jp morgan', 'coca-cola',
+                'mcdonalds', '3m', 'merck', 'microsoft', 'nike', 'procter & gamble',
+                'travelers', 'unitedhealth', 'visa', 'verizon', 'walgreens', 'walmart'
+            ]
+            # Tạo regex từ danh sách công ty, thoát ký tự đặc biệt
+            company_regex = '|'.join(re.escape(name) for name in company_names)
+            company_match = re.search(f'\\b({company_regex})\\b', company_name)
             if company_match:
                 params['ticker'] = f"%{company_match.group(0)}%"
                 sql_query = template['sql'].replace("symbol = '{ticker}'", "name LIKE '{ticker}'")
             else:
-                logger.error("No company name or ticker provided")
+                logger.error(f"No company name or ticker provided in query: {sub_query}")
                 return ERROR_MESSAGES["invalid_query"]
         else:
             sql_query = template['sql'].format(**params)

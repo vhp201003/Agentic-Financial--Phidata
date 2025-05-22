@@ -524,8 +524,8 @@ if prompt := st.chat_input(placeholder):
                 try:
                     response = requests.post(API_URL, json={"query": prompt})
                     response_data = response.json()
-                    logger.info(f"Response data: {response_data}")
                     response_json = json.loads(response_data['response'])
+                    logger.info(f"Response data: {response_data}")
                     logger.info(f"Parsed response JSON: {response_json}")
                     if response_json['status'] == 'success':
                         timestamp = datetime.now().strftime("%H:%M:%S %d/%m/%Y")
@@ -546,6 +546,26 @@ if prompt := st.chat_input(placeholder):
                         st.markdown(message, unsafe_allow_html=True)
                         for vis in assistant_message["visualizations"]:
                             st.plotly_chart(vis["fig"], key=vis["key"])
+                        
+                        # Display token metrics
+                        if 'data' in response_json and 'token_metrics' in response_json['data']:
+                            with st.expander("Token Usage" if language == "en" else "Thông tin sử dụng Token", expanded=False):
+                                token_metrics = response_json['data']['token_metrics']
+                                st.markdown("**Token Usage Details:**")
+                                for agent, metrics in token_metrics.items():
+                                    st.markdown(f"- **{agent.replace('_', ' ').title()}:** Input: {metrics['input_tokens']}, Output: {metrics['output_tokens']}, Total: {metrics['total_tokens']}")
+                        else:
+                            timestamp = datetime.now().strftime("%H:%M:%S %d/%m/%Y")
+                            st.session_state.chat_history.append({
+                                "role": "assistant",
+                                "content": f"Error: {response_json['message']}",
+                                "timestamp": timestamp,
+                                "visualizations": []
+                            })
+                            st.session_state.dashboard_info = None
+                            st.session_state.logs = response_json.get('logs', 'No logs were sent.' if language == "en" else 'KhÃ´ng cÃ³ log nÃ o Ä�Æ°á»£c gá»­i lÃªn.')
+                            st.markdown(f"**Assistant** - {timestamp}")
+                            st.write(f"Error: {response_json['message']}")
                     else:
                         timestamp = datetime.now().strftime("%H:%M:%S %d/%m/%Y")
                         st.session_state.chat_history.append({

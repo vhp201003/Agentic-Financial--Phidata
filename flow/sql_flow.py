@@ -11,7 +11,13 @@ def sql_flow(sub_query: str, sql_agent, sql_tool, metadata: dict = None) -> dict
     try:
         logger.info(f"Calling sql_agent with sub_query: {sub_query}, metadata: {metadata}")
         sql_response = sql_agent.run(sub_query, metadata=metadata or {})
+        token_metrics = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
         if isinstance(sql_response, RunResponse):
+            metrics = getattr(sql_response, 'metrics', {})
+            token_metrics["input_tokens"] = metrics.get('input_tokens', 0)
+            token_metrics["output_tokens"] = metrics.get('output_tokens', 0)
+            token_metrics["total_tokens"] = metrics.get('total_tokens', token_metrics["input_tokens"] + token_metrics["output_tokens"])
+            logger.info(f"[Text2SQL] Token metrics: Input tokens={token_metrics['input_tokens']}, Output tokens={token_metrics['output_tokens']}, Total tokens={token_metrics['total_tokens']}")
             sql_response = sql_response.content
         logger.debug(f"Raw SQL response from sql_agent: {sql_response}")
 
@@ -56,11 +62,13 @@ def sql_flow(sub_query: str, sql_agent, sql_tool, metadata: dict = None) -> dict
 
         return {
             "response_for_chat": response_for_chat,
-            "actual_result": result_data
+            "actual_result": result_data,
+            "token_metrics": token_metrics
         }
     except Exception as e:
         logger.error(f"Error in sql_flow: {str(e)}")
         return {
             "response_for_chat": f"Lỗi trong sql_flow: {str(e)}",
-            "actual_result": []
+            "actual_result": [],
+            "token_metrics": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
         }

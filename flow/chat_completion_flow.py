@@ -109,7 +109,7 @@ def prepare_sql_summary(sql_response: str, config: dict, tickers: list, required
         logger.error(f"Failed to parse SQL data: {str(e)}")
         return config['formatting']['sql']['empty_message']['vi']
 
-def chat_completion_flow(query: str, rag_documents: list, sql_response: str, dashboard_info: dict, chat_completion_agent, tickers: list = None) -> str:
+def chat_completion_flow(query: str, rag_documents: list, sql_response: str, dashboard_info: dict, chat_completion_agent, tickers: list = None) -> dict:
     try:
         if not isinstance(query, str):
             logger.error(f"Invalid query format: {type(query)}")
@@ -147,7 +147,13 @@ def chat_completion_flow(query: str, rag_documents: list, sql_response: str, das
 
         try:
             response = chat_completion_agent.run(chat_input)
+            token_metrics = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
             if isinstance(response, RunResponse):
+                metrics = getattr(response, 'metrics', {})
+                token_metrics["input_tokens"] = metrics.get('input_tokens', 0)
+                token_metrics["output_tokens"] = metrics.get('output_tokens', 0)
+                token_metrics["total_tokens"] = metrics.get('total_tokens', token_metrics["input_tokens"] + token_metrics["output_tokens"])
+                logger.info(f"[ChatCompletion] Token metrics: Input tokens={token_metrics['input_tokens']}, Output tokens={token_metrics['output_tokens']}, Total tokens={token_metrics['total_tokens']}")
                 response = response.content
             # answer_match = re.search(r'Answer: (.*?)\nSummary:', response, re.DOTALL)  # Bỏ phần lấy answer
             summary_match = re.search(r'Summary: (.*)', response, re.DOTALL)
@@ -184,8 +190,14 @@ def chat_completion_flow(query: str, rag_documents: list, sql_response: str, das
             summary=summary  # Chỉ sử dụng summary
         )
         logger.info(f"Final response: {final_response}")
-        return final_response
+        return {
+            "content": final_response,
+            "token_metrics": token_metrics
+        }
 
     except Exception as e:
         logger.error(f"Error in chat completion flow: {str(e)}")
-        return f"Không có dữ liệu để trả lời truy vấn '{query}'."
+        return {
+            "content": f"Không có dữ liệu để trả lời truy vấn '{query}'.",
+            "token_metrics": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+        }

@@ -6,7 +6,6 @@ import json
 import queue
 import re
 from agents.orchestrator import create_orchestrator
-from agents.rag_agent import create_rag_agent, build_company_mapping
 from agents.text_to_sql_agent import create_text_to_sql_agent
 from agents.chat_completion_agent import create_chat_completion_agent
 from agents.visualize_agent import create_visualize_agent
@@ -14,6 +13,7 @@ from tools.sql_tool import CustomSQLTool
 from tools.rag_tool import CustomRAGTool
 from flow.orchestrator_flow import orchestrator_flow
 from utils.logging import setup_logging, get_collected_logs
+from utils.company_mapping import build_company_mapping
 from pydantic import BaseModel
 import uvicorn
 
@@ -22,7 +22,6 @@ logger = setup_logging()
 app = FastAPI()
 
 # Initialize agents and tools
-rag_agent = create_rag_agent()
 text_to_sql_agent = create_text_to_sql_agent()
 chat_completion_agent = create_chat_completion_agent()
 visualize_agent = create_visualize_agent()
@@ -93,7 +92,7 @@ class QueryRequest(BaseModel):
 async def query_team(request: QueryRequest):
     logger.info(f"Received query for Agent Team: {request.query}")
     normalized_query = normalize_company_name(request.query)
-    response = orchestrator_flow(normalized_query, orchestrator, text_to_sql_agent, sql_tool, rag_agent, rag_tool, chat_completion_agent)
+    response = orchestrator_flow(normalized_query, orchestrator, text_to_sql_agent, sql_tool, rag_tool, chat_completion_agent)
 
     if response["status"] == "error" or response["data"].get("result") is None or not response["data"]["result"]:
         response = {
