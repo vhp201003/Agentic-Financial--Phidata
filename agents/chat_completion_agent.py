@@ -92,7 +92,7 @@ You are Chat Completion Agent, answering the user's query based on summarized da
 6. Output:
    - Plain text (not Markdown) with answer and summary:
      - Answer: [Direct answer to the query].
-     - Summary: [1-2 sentences summarizing the main finding].
+     - Summary: [4-5 sentences summarizing the main finding].
 
 Example: Query: 'What was the standard deviation of Apple’s daily closing prices in 2024?'
 Tickers: ["AAPL"]
@@ -105,9 +105,9 @@ Summary: Độ lệch chuẩn của giá đóng cửa hàng ngày của Apple tr
 """
     return Agent(
         model=Groq(
-            id=GROQ_MODEL,
+            id="llama-3.1-8b-instant",
             api_key=GROQ_API_KEY,
-            temperature=0.2,
+            temperature=1.0,
             max_tokens=1000,
             presence_penalty=0.3,
             top_p=0.8

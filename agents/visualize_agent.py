@@ -118,7 +118,7 @@ Input Examples:
 """
     return Agent(
         model=Groq(
-            id=GROQ_MODEL,
+            id="llama-3.1-8b-instant",
             api_key=GROQ_API_KEY,
             timeout=30,
             max_retries=5,
@@ -129,7 +129,7 @@ Input Examples:
         ),
         system_prompt=system_prompt,
         custom_run=lambda self, input_data: self.run_with_validation(input_data),
-        debug_mode=True,
+        # debug_mode=True,
     )
 
 def run_with_validation(self, input_data: Any) -> Dict[str, Any]:

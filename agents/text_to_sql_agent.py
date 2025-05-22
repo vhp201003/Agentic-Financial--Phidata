@@ -114,7 +114,7 @@ Examples:
 """
     return Agent(
         model=Groq(
-            id=GROQ_MODEL,
+            id="llama-3.3-70b-versatile",
             api_key=GROQ_API_KEY,
             timeout=30,
             max_retries=5,

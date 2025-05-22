@@ -96,7 +96,7 @@ You are Orchestrator, analyzing financial queries and delegating tasks to text2s
 """
     return Agent(
         model=Groq(
-            id=GROQ_MODEL,
+            id="llama-3.3-70b-versatile",
             api_key=GROQ_API_KEY,
             timeout=30,
             max_retries=5,
@@ -106,4 +106,5 @@ You are Orchestrator, analyzing financial queries and delegating tasks to text2s
             response_format={"type": "json_object"}
         ),
         system_prompt=system_prompt,
+        debug_mode=True,
     )
