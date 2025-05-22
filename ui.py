@@ -549,23 +549,29 @@ if prompt := st.chat_input(placeholder):
                         
                         # Display token metrics
                         if 'data' in response_json and 'token_metrics' in response_json['data']:
+                            token_metrics = response_json['data']['token_metrics']
                             with st.expander("Token Usage" if language == "en" else "Thông tin sử dụng Token", expanded=False):
-                                token_metrics = response_json['data']['token_metrics']
                                 st.markdown("**Token Usage Details:**")
                                 for agent, metrics in token_metrics.items():
-                                    st.markdown(f"- **{agent.replace('_', ' ').title()}:** Input: {metrics['input_tokens']}, Output: {metrics['output_tokens']}, Total: {metrics['total_tokens']}")
+                                    # Loại bỏ list khi hiển thị
+                                    input_tokens = metrics['input_tokens'][0] if isinstance(metrics['input_tokens'], list) and metrics['input_tokens'] else metrics['input_tokens']
+                                    output_tokens = metrics['output_tokens'][0] if isinstance(metrics['output_tokens'], list) and metrics['output_tokens'] else metrics['output_tokens']
+                                    total_tokens_value = metrics['total_tokens'][0] if isinstance(metrics['total_tokens'], list) and metrics['total_tokens'] else metrics['total_tokens']
+                                    st.markdown(f"- **{agent.replace('_', ' ').title()}:** Input: {input_tokens}, Output: {output_tokens}, Total: {total_tokens_value}")
+                                # Tính tổng sau khi loại bỏ list
+                                total_tokens_sum = sum(
+                                    metrics['total_tokens'][0] if isinstance(metrics['total_tokens'], list) and metrics['total_tokens'] else metrics['total_tokens']
+                                    for metrics in token_metrics.values()
+                                )
+                                st.markdown(
+                                    f"<p style='text-align: center; color: #888;'>Total tokens used: {total_tokens_sum}</p>",
+                                    unsafe_allow_html=True
+                                )
                         else:
-                            timestamp = datetime.now().strftime("%H:%M:%S %d/%m/%Y")
-                            st.session_state.chat_history.append({
-                                "role": "assistant",
-                                "content": f"Error: {response_json['message']}",
-                                "timestamp": timestamp,
-                                "visualizations": []
-                            })
-                            st.session_state.dashboard_info = None
-                            st.session_state.logs = response_json.get('logs', 'No logs were sent.' if language == "en" else 'KhÃ´ng cÃ³ log nÃ o Ä�Æ°á»£c gá»­i lÃªn.')
-                            st.markdown(f"**Assistant** - {timestamp}")
-                            st.write(f"Error: {response_json['message']}")
+                            st.markdown(
+                                "<p style='text-align: center; color: #888;'>No token metrics available.</p>",
+                                unsafe_allow_html=True
+                            )
                     else:
                         timestamp = datetime.now().strftime("%H:%M:%S %d/%m/%Y")
                         st.session_state.chat_history.append({

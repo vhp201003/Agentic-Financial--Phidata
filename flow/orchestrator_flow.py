@@ -38,14 +38,20 @@ def process_response(response: any, context: str) -> tuple[dict, dict]:
     try:
         if isinstance(response, RunResponse):
             metrics = getattr(response, 'metrics', {})
-            token_metrics["input_tokens"] = metrics.get('input_tokens', 0)
-            token_metrics["output_tokens"] = metrics.get('output_tokens', 0)
+            # Loại bỏ list nếu có, lấy giá trị đầu tiên
+            input_tokens = metrics.get('input_tokens', 0)
+            output_tokens = metrics.get('output_tokens', 0)
+            token_metrics["input_tokens"] = input_tokens[0] if isinstance(input_tokens, list) and input_tokens else input_tokens
+            token_metrics["output_tokens"] = output_tokens[0] if isinstance(output_tokens, list) and output_tokens else output_tokens
             token_metrics["total_tokens"] = metrics.get('total_tokens', token_metrics["input_tokens"] + token_metrics["output_tokens"])
+            if isinstance(token_metrics["total_tokens"], list):
+                token_metrics["total_tokens"] = token_metrics["total_tokens"][0] if token_metrics["total_tokens"] else 0
             logger.info(f"[{context}] Token metrics: Input tokens={token_metrics['input_tokens']}, Output tokens={token_metrics['output_tokens']}, Total tokens={token_metrics['total_tokens']}")
             response_content = response.content
         else:
+            logger.error(f"Unexpected response type in {context}: {type(response)}, content: {response}")
             response_content = response
-
+            
         if isinstance(response_content, dict):
             logger.info(f"[{context}] Response is already JSON: {json.dumps(response_content, ensure_ascii=False)}")
             return response_content, token_metrics

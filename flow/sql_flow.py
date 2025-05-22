@@ -9,14 +9,18 @@ logger = setup_logging()
 
 def sql_flow(sub_query: str, sql_agent, sql_tool, metadata: dict = None) -> dict:
     try:
-        logger.info(f"Calling sql_agent with sub_query: {sub_query}, metadata: {metadata}")
+        logger.info(f"Calling sql_agent with sub_query: {sub_query}")
         sql_response = sql_agent.run(sub_query, metadata=metadata or {})
         token_metrics = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
         if isinstance(sql_response, RunResponse):
             metrics = getattr(sql_response, 'metrics', {})
-            token_metrics["input_tokens"] = metrics.get('input_tokens', 0)
-            token_metrics["output_tokens"] = metrics.get('output_tokens', 0)
+            input_tokens = metrics.get('input_tokens', 0)
+            output_tokens = metrics.get('output_tokens', 0)
+            token_metrics["input_tokens"] = input_tokens[0] if isinstance(input_tokens, list) and input_tokens else input_tokens
+            token_metrics["output_tokens"] = output_tokens[0] if isinstance(output_tokens, list) and output_tokens else output_tokens
             token_metrics["total_tokens"] = metrics.get('total_tokens', token_metrics["input_tokens"] + token_metrics["output_tokens"])
+            if isinstance(token_metrics["total_tokens"], list):
+                token_metrics["total_tokens"] = token_metrics["total_tokens"][0] if token_metrics["total_tokens"] else 0
             logger.info(f"[Text2SQL] Token metrics: Input tokens={token_metrics['input_tokens']}, Output tokens={token_metrics['output_tokens']}, Total tokens={token_metrics['total_tokens']}")
             sql_response = sql_response.content
         logger.debug(f"Raw SQL response from sql_agent: {sql_response}")

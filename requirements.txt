@@ -1,5 +1,6 @@
 phidata
 groq
+mistralai
 sqlalchemy==2.0.0 
 load_dotenv
 qdrant-client==1.11.0 
