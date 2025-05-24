@@ -540,30 +540,51 @@ def create_dashboard(data, visualization, timestamp, vis_list):
         # 8. Heatmap
         elif visualization_type == "heatmap":
             key = f"plotly_chart_heatmap_{timestamp.replace(' ', '_').replace('/', '_')}_{len(vis_list)}"
-            columns = ui_requirements.get("columns", [])
-
-            if not columns or not all(col in df.columns for col in columns):
-                if st.session_state.get("show_debug", False):
-                    st.write(f"Debug: Missing or invalid columns for heatmap: columns={columns}")
-                st.markdown(f"<p style='text-align: center; color: #888;'>No valid columns for heatmap.</p>", unsafe_allow_html=True)
+            
+            # Lấy danh sách tickers từ query hoặc metadata
+            tickers = ui_requirements.get("tickers", [])
+            if not tickers:
+                st.markdown("<p style='text-align: center; color: #888;'>No tickers provided for heatmap.</p>", unsafe_allow_html=True)
                 return
 
-            matrix = [[row[col] for col in columns] for row in data]
+            # Tạo danh sách cột cho ma trận tương quan
+            columns = [f"{t1.lower()}_{t2.lower()}" for i, t1 in enumerate(tickers) for t2 in tickers[i:]]
+            
+            if not all(col in df.columns for col in columns):
+                st.write(f"Debug: Missing columns for heatmap: {columns}")
+                st.markdown("<p style='text-align: center; color: #888;'>No valid columns for heatmap.</p>", unsafe_allow_html=True)
+                return
+
+            # Tạo ma trận tương quan
+            matrix = []
+            for t1 in tickers:
+                row = []
+                for t2 in tickers:
+                    col_name = f"{t1.lower()}_{t2.lower()}" if t1 <= t2 else f"{t2.lower()}_{t1.lower()}"
+                    value = df[col_name].iloc[0] if col_name in df.columns else df[f"{t2.lower()}_{t1.lower()}"].iloc[0]
+                    row.append(value)
+                matrix.append(row)
             matrix = np.array(matrix, dtype=float)
 
-            if st.session_state.get("show_debug", False):
-                st.write("Debug: Rendering heatmap")
             fig = go.Figure(
                 data=go.Heatmap(
                     z=matrix,
+                    x=tickers,
+                    y=tickers,
                     colorscale=[[0, 'rgb(0, 123, 255)'], [1, 'rgb(255, 99, 71)']],
-                    hoverongaps=False
+                    hoverongaps=False,
+                    text=np.round(matrix, 2).astype(str),
+                    texttemplate="%{text}",
+                    textfont={"size": 12}
                 )
             )
             fig.update_layout(
-                title="Correlation Matrix",
+                title="Correlation Matrix of Daily Returns",
+                xaxis_title="Tickers",
+                yaxis_title="Tickers",
                 margin=dict(l=10, r=10, t=30, b=10),
-                hovermode="closest"
+                hovermode="closest",
+                xaxis=dict(tickangle=45)
             )
             vis_list.append({
                 "type": "heatmap",
@@ -579,22 +600,22 @@ def create_dashboard(data, visualization, timestamp, vis_list):
 
 SUPPORTED_VISUALIZATION_TYPES = load_visualization_metadata()
 
-with st.sidebar:
-    st.title('Financial Assistant Chatbot')
-    st.write('A financial analysis chatbot powered by API.')
-    st.subheader('Options')
-    language = st.selectbox("Language", ["vi", "en"], key="language")
-    show_debug = st.checkbox("Show Debug Info", value=False, key="show_debug")
-    if st.button('Clear Chat History', key="clear", type="secondary"):
-        st.session_state.chat_history = [{
-            "role": "assistant",
-            "content": "How can I assist you today?" if language == "en" else "Tôi có thể giúp gì cho bạn hôm nay?",
-            "timestamp": datetime.now().strftime("%H:%M:%S %d/%m/%Y")
-        }]
-        st.session_state.dashboard_info = None
-        st.session_state.logs = None
-        st.rerun()
-
+# with st.sidebar:
+#     st.title('Financial Assistant Chatbot')
+#     st.write('A financial analysis chatbot powered by API.')
+#     st.subheader('Options')
+#     language = st.selectbox("Language", ["vi", "en"], key="language")
+#     show_debug = st.checkbox("Show Debug Info", value=False, key="show_debug")
+#     if st.button('Clear Chat History', key="clear", type="secondary"):
+#         st.session_state.chat_history = [{
+#             "role": "assistant",
+#             "content": "How can I assist you today?" if language == "en" else "Tôi có thể giúp gì cho bạn hôm nay?",
+#             "timestamp": datetime.now().strftime("%H:%M:%S %d/%m/%Y")
+#         }]
+#         st.session_state.dashboard_info = None
+#         st.session_state.logs = None
+#         st.rerun()
+language = "vi"
 if 'chat_history' not in st.session_state:
     st.session_state.chat_history = [{
         "role": "assistant",
@@ -621,9 +642,9 @@ for chat in st.session_state.chat_history:
             for vis in chat.get("visualizations", []):
                 st.plotly_chart(vis["fig"], key=vis["key"])
 
-if st.session_state.logs:
-    with st.sidebar.expander("View detailed logs" if language == "en" else "Xem chi tiết log", expanded=False):
-        st.text(st.session_state.logs)
+# if st.session_state.logs:
+#     with st.sidebar.expander("View detailed logs" if language == "en" else "Xem chi tiết log", expanded=False):
+#         st.text(st.session_state.logs)
 
 placeholder = "Enter your query (e.g., What is the closing price of Apple on 01/01/2025?)" if language == "en" else "Nhập câu hỏi của bạn (ví dụ: Giá đóng cửa của Apple ngày 01/01/2025?)"
 if prompt := st.chat_input(placeholder):

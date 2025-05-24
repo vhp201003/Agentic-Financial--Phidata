@@ -78,9 +78,23 @@ visualized_template:
     intent_keywords: ["daily volume", "volume vs price", "scatter"]
 
   - name: "heatmap_returns"
-    description: "Correlation of daily returns between companies"
-    required_columns: ["symbol1_return", "symbol2_return"]
-    sql: "SELECT symbol, (close_price - LAG(close_price) OVER (PARTITION BY symbol ORDER BY date)) / LAG(close_price) OVER (PARTITION BY symbol ORDER BY date) AS daily_return FROM stock_prices WHERE symbol IN ({tickers}) AND date BETWEEN '{start_date}' AND '{end_date}';"
+    description: "Correlation matrix of daily returns between companies"
+    required_columns: []  # Không cần chỉ định cột cụ thể, vì correlation sẽ được tính sau
+    sql: |
+      WITH daily_returns AS (
+        SELECT 
+          date,
+          {tickers_columns}
+        FROM stock_prices
+        WHERE symbol IN ({tickers}) 
+          AND date BETWEEN '{start_date}' AND '{end_date}'
+        GROUP BY date
+        ORDER BY date
+      )
+      SELECT 
+        {correlation_columns}
+      FROM daily_returns
+      WHERE {not_null_conditions};
     intent_keywords: ["correlation", "heatmap", "returns"]
 
   - name: "scatter_market_cap_pe"

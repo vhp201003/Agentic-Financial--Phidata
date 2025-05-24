@@ -216,9 +216,9 @@ class CustomRAGTool(Toolkit):
             raise
 
     def run(self, query: str, company: str = None, tickers: list = None) -> list:
-        """Retrieve top 5 closest documents from Qdrant based on query embedding."""
+        """Retrieve top 5 closest documents from Qdrant based on query embedding, filtered by company if provided."""
         try:
-            logger.info(f"Executing RAG query: {query}")
+            logger.info(f"Executing RAG query: {query}, company: {company}, tickers: {tickers}")
             query_embedding = self.model.encode(query).tolist()
 
             # Kiểm tra xem Qdrant có tài liệu không
@@ -227,10 +227,24 @@ class CustomRAGTool(Toolkit):
                 logger.error(f"Qdrant collection {self.collection_name} does not exist")
                 return [{"error": "No documents loaded in Qdrant. Please upload financial reports to ./data/rag_documents and reload."}]
 
-            # Tìm kiếm không dùng bộ lọc, lấy top 5 tài liệu
+            # Tạo bộ lọc theo company nếu có
+            filter_conditions = []
+            if company:
+                company_variants = [company, f"{company} Inc.", f"{company} Corporation", f"{company} Co.", f"The {company}"]
+                company_conditions = [
+                    models.FieldCondition(
+                        key="company",
+                        match=models.MatchText(text=variant)
+                    )
+                    for variant in company_variants
+                ]
+                filter_conditions.append(models.Filter(should=company_conditions))
+
+            # Tìm kiếm với bộ lọc (nếu có), lấy top 5 tài liệu
             search_result = self.client.search(
                 collection_name=self.collection_name,
                 query_vector=query_embedding,
+                query_filter=models.Filter(must=filter_conditions) if filter_conditions else None,
                 limit=5  # Lấy 5 tài liệu gần nhất
             )
 

@@ -135,14 +135,28 @@ visualization_metadata:
         intent_keywords: ["daily volume", "volume vs price", "scatter"]
 
   - vis_type: "heatmap"
-    description: "Heatmap for visualizing correlation"
+    description: "Heatmap for visualizing correlation matrix of daily returns"
     columns:
       - name: "columns"
-        description: "List of columns representing the values for the heatmap"
-        intent_keywords: ["symbol1_return", "symbol2_return", "returns"]
+        description: "Dynamic columns for correlation matrix (e.g., aapl_msft, aapl_jpm)"
+        intent_keywords: ["correlation", "returns"]
     templates:
       - name: "heatmap_returns"
-        description: "Correlation of daily returns between companies"
-        required_columns: ["symbol1_return", "symbol2_return"]
-        sql: "SELECT symbol, (close_price - LAG(close_price) OVER (PARTITION BY symbol ORDER BY date)) / LAG(close_price) OVER (PARTITION BY symbol ORDER BY date) AS daily_return FROM stock_prices WHERE symbol IN ({tickers}) AND date BETWEEN '{start_date}' AND '{end_date}';"
+        description: "Correlation matrix of daily returns between companies"
+        required_columns: []
+        sql: |
+          WITH daily_returns AS (
+            SELECT 
+              date,
+              {tickers_columns}
+            FROM stock_prices
+            WHERE symbol IN ({tickers}) 
+              AND date BETWEEN '{start_date}' AND '{end_date}'
+            GROUP BY date
+            ORDER BY date
+          )
+          SELECT 
+            {correlation_columns}
+          FROM daily_returns
+          WHERE {not_null_conditions};
         intent_keywords: ["correlation", "heatmap", "returns"]

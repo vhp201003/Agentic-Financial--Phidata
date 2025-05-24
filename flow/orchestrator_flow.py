@@ -11,6 +11,7 @@ from flow.chat_completion_flow import chat_completion_flow
 import re
 import yaml
 from agents.visualize_agent import create_visualize_agent
+from agents.rag_agent import run_rag_agent
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 logger = setup_logging()
@@ -327,8 +328,17 @@ def orchestrator_flow(query: str, orchestrator: Agent, sql_agent, sql_tool, rag_
 
             elif agent_name == "rag_agent":
                 if thinking_queue:
+                    thinking_queue.put("Đang phân tích query cho RAG...")
+                # Gọi RAG Agent để tạo sub-query và xác định company
+                rag_agent_result = run_rag_agent(sub_query)
+                logger.info(f"RAG Agent result: {rag_agent_result}")
+                optimized_sub_query = rag_agent_result.get("sub-query", sub_query)
+                company = rag_agent_result.get("company", None)
+                
+                if thinking_queue:
                     thinking_queue.put("Đang tìm kiếm tài liệu RAG...")
-                rag_documents = rag_flow(sub_query, rag_tool)
+                # Truyền optimized_sub_query và company vào rag_flow
+                rag_documents = rag_flow(optimized_sub_query, rag_tool, company=company)
                 if thinking_queue:
                     thinking_queue.put(f"RAG: {json.dumps(rag_documents, ensure_ascii=False)[:200]}...")
                 logger.info(f"RAG Documents: {rag_documents}")
@@ -378,11 +388,22 @@ def orchestrator_flow(query: str, orchestrator: Agent, sql_agent, sql_tool, rag_
             }
         }
 
+        #Sửa đoạn chat_completion_flow
         if thinking_queue:
             thinking_queue.put("Đang sinh câu trả lời cuối...")
         final_response_message = chat_completion_flow(query, rag_documents, sql_response, dashboard_info, chat_completion_agent, tickers=tickers)
-        final_response_message_dict = final_response_message if isinstance(final_response_message, dict) else {"content": final_response_message}
+
+        # Xử lý phản hồi từ chat_completion_flow
+        if isinstance(final_response_message, dict):
+            final_response_message_dict = final_response_message
+        else:
+            final_response_message_dict = {"content": str(final_response_message), "token_metrics": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}}
+
+        # Đảm bảo token_metrics hợp lệ
         token_metrics["chat_completion"] = final_response_message_dict.get("token_metrics", {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0})
+        if not isinstance(token_metrics["chat_completion"], dict):
+            token_metrics["chat_completion"] = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+
         if thinking_queue:
             chat_input = (
                 f"Query: {query}\n"

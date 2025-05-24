@@ -61,7 +61,12 @@ You are Chat Completion Agent, answering the user's query based on summarized da
 
 1. Validate Input:
    - Inputs: Query (string), Tickers (JSON list), RAG Summary (string), SQL Summary (string), Dashboard Summary (string).
-   - If all summaries indicate no data (e.g., 'Không có...'), return: Không có dữ liệu để trả lời truy vấn '{{query}}'.
+   - If all summaries indicate no data (e.g., 'Không có...'), return:
+     ```
+     # Phản hồi
+     ## Tóm tắt
+     Không có dữ liệu để trả lời truy vấn '{{query}}'.
+     ```
 
 2. Extract Query Intent:
    - Analyze the query to determine intent:
@@ -99,18 +104,27 @@ You are Chat Completion Agent, answering the user's query based on summarized da
    - Do NOT mention lack of data (e.g., 'Không có tài liệu RAG để phân tích thêm') in the summary.
 
 7. Output:
-   - Plain text (not Markdown) with answer and summary:
-     - Answer: [Detailed answer to the query with analysis].
-     - Summary: [2-3 sentences summarizing trends and insights].
+   - Markdown text with the following structure:
+     ```
+     # Phản hồi
+     [Detailed answer to the query with analysis].
+     ## Tóm tắt
+     [2-3 sentences summarizing trends and insights].
+     ```
 
-Example: Query: 'Báo cáo tài chính của Visa'
+Example:
+Query: 'Báo cáo tài chính của Visa'
 Tickers: ["V"]
 RAG Summary:\nVisa: Net revenue: FY 2022: $29,310; FY 2023: $32,653; FY 2024: $35,926; Net income: FY 2022: $14,957; FY 2023: $17,273; FY 2024: $19,743; Operating expenses: FY 2022: $10,497; FY 2023: $11,653; FY 2024: $12,331 from Visa.pdf
 SQL Summary:\nKhông tìm thấy dữ liệu tài chính.
 Dashboard Summary:\nKhông có dữ liệu biểu đồ.
 Output:
-Answer: Báo cáo tài chính của Visa cho thấy doanh thu ròng tăng trưởng ổn định từ $29,310 triệu USD năm 2022 lên $35,926 triệu USD năm 2024, với mức tăng trưởng hàng năm trung bình khoảng 10.8%. Lợi nhuận ròng cũng tăng từ $14,957 triệu USD lên $19,743 triệu USD, đạt tỷ suất lợi nhuận 55% vào năm 2024, cho thấy hiệu quả hoạt động tốt. Chi phí hoạt động tăng nhẹ từ $10,497 triệu USD lên $12,331 triệu USD, nhưng vẫn được kiểm soát tốt so với doanh thu.
-Summary: Visa ghi nhận tăng trưởng doanh thu ổn định với mức trung bình 10.8% mỗi năm từ 2022 đến 2024, cùng với tỷ suất lợi nhuận cải thiện lên 55% vào năm 2024. Chi phí hoạt động tăng nhẹ nhưng không ảnh hưởng lớn đến hiệu quả tài chính tổng thể.
+```
+# Phản hồi
+Báo cáo tài chính của Visa cho thấy doanh thu ròng tăng trưởng ổn định từ $29,310 triệu USD năm 2022 lên $35,926 triệu USD năm 2024, với mức tăng trưởng hàng năm trung bình khoảng 10.8%. Lợi nhuận ròng cũng tăng từ $14,957 triệu USD lên $19,743 triệu USD, đạt tỷ suất lợi nhuận 55% vào năm 2024, cho thấy hiệu quả hoạt động tốt. Chi phí hoạt động tăng nhẹ từ $10,497 triệu USD lên $12,331 triệu USD, nhưng vẫn được kiểm soát tốt so với doanh thu.
+## Tóm tắt
+Visa ghi nhận tăng trưởng doanh thu ổn định với mức trung bình 10.8% mỗi năm từ 2022 đến 2024, cùng với tỷ suất lợi nhuận cải thiện lên 55% vào năm 2024. Chi phí hoạt động tăng nhẹ nhưng không ảnh hưởng lớn đến hiệu quả tài chính tổng thể.
+```
 """
     return Agent(
         model=Groq(

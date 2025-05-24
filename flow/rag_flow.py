@@ -3,12 +3,12 @@ from utils.logging import setup_logging
 
 logger = setup_logging()
 
-def rag_flow(sub_query: str, rag_tool, tickers: list = None) -> list:
+def rag_flow(sub_query: str, rag_tool, tickers: list = None, company: str = None) -> list:
     """Xử lý flow của RAG: gọi rag_tool để lấy tài liệu, trả về danh sách tài liệu gốc."""
     try:
-        logger.info(f"Executing RAG query: {sub_query}, tickers: {tickers}")
-        # Gọi rag_tool với tickers
-        documents = rag_tool.run(sub_query, tickers=tickers)
+        logger.info(f"Executing RAG query: {sub_query}, tickers: {tickers}, company: {company}")
+        # Gọi rag_tool với sub_query, tickers và company
+        documents = rag_tool.run(sub_query, company=company, tickers=tickers)
         logger.debug(f"Documents from rag_tool: {str(documents)[:100]}...")
 
         # Kiểm tra lỗi từ rag_tool

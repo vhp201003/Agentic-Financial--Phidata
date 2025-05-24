@@ -53,11 +53,14 @@ def prepare_rag_summary(rag_documents: list, config: dict) -> str:
     return "\n".join(f"{company}: " + "; ".join(entries) for company, entries in rag_by_company.items())
 
 def prepare_sql_summary(sql_response: str, config: dict, tickers: list) -> str:
+    # Nếu sql_response không chứa dữ liệu, trả về empty message
     if "Dữ liệu từ cơ sở dữ liệu" not in sql_response:
         return config['formatting']['sql']['empty_message']['vi']
 
+    # Trích xuất JSON data từ sql_response
     match = re.search(r'\[(.*)\]', sql_response, re.DOTALL)
     if not match:
+        logger.warning(f"No JSON data found in sql_response: {sql_response}")
         return config['formatting']['sql']['empty_message']['vi']
 
     try:
@@ -68,8 +71,18 @@ def prepare_sql_summary(sql_response: str, config: dict, tickers: list) -> str:
 
         summaries = []
         for record in data:
+            # Kiểm tra record có dữ liệu hợp lệ
+            if not isinstance(record, dict):
+                logger.warning(f"Invalid record format in SQL data: {record}")
+                continue
             for key, value in record.items():
-                summaries.append(f"{key.replace('_', ' ').title()}: {value}")
+                # Format key và value, đảm bảo không bỏ qua single-value như 'min'
+                formatted_key = key.replace('_', ' ').title()
+                formatted_value = str(value) if value is not None else "N/A"
+                summaries.append(f"{formatted_key}: {formatted_value}")
+        if not summaries:
+            logger.warning(f"No valid summaries generated from SQL data: {data}")
+            return config['formatting']['sql']['empty_message']['vi']
         return "\n".join(summaries)
     except json.JSONDecodeError as e:
         logger.error(f"Failed to parse SQL data: {str(e)}")
@@ -106,8 +119,21 @@ def chat_completion_flow(query: str, rag_documents: list, sql_response: str, das
     try:
         # Prepare input for chat completion
         rag_summary = prepare_rag_summary(rag_documents, config)
-        sql_summary = prepare_sql_summary(sql_response, config, tickers)
+        sql_summary = sql_response #prepare_sql_summary(sql_response, config, tickers)
         dashboard_summary = prepare_dashboard_summary(dashboard_info, config)
+
+        # Kiểm tra nếu không có dữ liệu từ bất kỳ nguồn nào
+        has_data = (
+            rag_summary != config['formatting']['rag']['empty_message']['vi'] or
+            sql_summary != config['formatting']['sql']['empty_message']['vi'] or
+            dashboard_summary != config['formatting']['dashboard']['empty_message']['vi']
+        )
+        if not has_data:
+            logger.error("No valid data from RAG, SQL, or Dashboard")
+            return {
+                "content": f"# Phản hồi\n## Tóm tắt\nKhông có dữ liệu để trả lời truy vấn '{query}'.",
+                "token_metrics": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+            }
 
         input_data = (
             f"Query: {query}\n"
@@ -118,22 +144,6 @@ def chat_completion_flow(query: str, rag_documents: list, sql_response: str, das
         )
         logger.info(f"Chat input for Chat Completion Agent: {input_data[:500]}...")
 
-        # Update system prompt for chat completion agent
-        chat_completion_agent.system_prompt = """
-You are a financial analysis assistant. Your task is to analyze the provided query, tickers, RAG summary, SQL summary, and dashboard summary, and generate a concise response summarizing the relevant financial information. 
-
-- Focus on the query and tickers provided.
-- Extract key financial metrics (e.g., revenue, profit, assets, liabilities) from the RAG summary if available.
-- If SQL or dashboard data is relevant, include it.
-- Return a short, clear response as a string (max 500 characters). Do not use markdown or extra formatting.
-- If no relevant data is found, return: "Không có dữ liệu để trả lời truy vấn."
-
-Example:
-Query: annual report of Apple
-Tickers: ["AAPL"]
-RAG Summary: Apple: 2025 Net revenue: 219,659M USD; Net income: 103,142M USD...
-Response: Apple's 2025 annual report shows net revenue of $219,659M and net income of $103,142M.
-"""
         # Run chat completion agent
         response = chat_completion_agent.run(input_data)
         logger.debug(f"Raw response from Groq: {response}")
@@ -144,7 +154,7 @@ Response: Apple's 2025 annual report shows net revenue of $219,659M and net inco
         elif isinstance(response, dict) and 'content' in response:
             response_content = response['content']
         elif isinstance(response, str):
-            response_content = response.strip()
+            response_content = response  # Giữ nguyên Markdown, không strip
         else:
             logger.error(f"Unexpected response type from Groq: {type(response)}")
             response_content = config['formatting']['chat']['empty_message']['vi']
@@ -172,6 +182,6 @@ Response: Apple's 2025 annual report shows net revenue of $219,659M and net inco
     except Exception as e:
         logger.error(f"Error in chat_completion_flow: {str(e)}")
         return {
-            "content": config['formatting']['chat']['empty_message']['vi'],
+            "content": f"# Phản hồi\n## Tóm tắt\nKhông có dữ liệu để trả lời truy vấn '{query}'.",
             "token_metrics": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
         }
