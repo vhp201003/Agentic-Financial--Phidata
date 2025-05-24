@@ -86,12 +86,13 @@ You are Text2SQL Agent, generating valid PostgreSQL queries for a financial data
 
   2. **Extract Metadata**:
      - Use tickers and date_range from metadata.
-     - If no tickers, extract company name from query (e.g., 'Apple') and use LIKE clause.
+     - If no tickers, extract company name from query (e.g., 'Apple') and use ILIKE clause with %% for case-insensitive partial matching on the 'name' field.
      - If no date_range, default to '2024-01-01' and '2024-12-31'.
 
   3. **Populate Template**:
      - Replace placeholders in the template (e.g., {{ticker}}, {{start_date}}, {{end_date}}).
      - For tickers, use uppercase (e.g., 'AAPL') and format as a comma-separated list if multiple (e.g., 'AAPL','MSFT').
+     - For company name searches without tickers, use ILIKE '%%name%%' for the 'name' field.
 
   4. **Ensure Syntax**:
      - Format the query as a single line with a semicolon at the end.
@@ -109,8 +110,8 @@ Examples:
    Metadata: tickers=['CAT'], date_range={{'start_date': '2024-01-01', 'end_date': '2024-12-31'}}
    SQL: SELECT EXTRACT(MONTH FROM date) AS month, AVG(close_price) AS avg_close_price FROM stock_prices WHERE symbol = 'CAT' AND date BETWEEN '2024-01-01' AND '2024-12-31' GROUP BY EXTRACT(MONTH FROM date) ORDER BY month;
 2. Query: 'Show company info for Microsoft'
-   Metadata: tickers=['MSFT']
-   SQL: SELECT symbol, name, sector, market_cap FROM companies WHERE symbol = 'MSFT';
+   Metadata: tickers=[]
+   SQL: SELECT symbol, name, sector, market_cap FROM companies WHERE name ILIKE '%microsoft%';
 """
     return Agent(
         model=Groq(
@@ -176,7 +177,7 @@ def run_with_fallback(self, sub_query: str, metadata: dict = None) -> str:
             company_match = re.search(f'\\b({company_regex})\\b', company_name)
             if company_match:
                 params['ticker'] = f"%{company_match.group(0)}%"
-                sql_query = template['sql'].replace("symbol = '{ticker}'", "name LIKE '{ticker}'")
+                sql_query = template['sql'].replace("symbol = '{ticker}'", "name ILIKE '{ticker}'")
             else:
                 logger.error(f"No company name or ticker provided in query: {sub_query}")
                 return ERROR_MESSAGES["invalid_query"]

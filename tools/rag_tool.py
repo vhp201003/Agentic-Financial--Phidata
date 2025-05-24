@@ -215,122 +215,39 @@ class CustomRAGTool(Toolkit):
             logger.error(f"Unexpected error in _load_documents: {str(e)}")
             raise
 
-    def run(self, query: str, company: str = None, description: str = None) -> list:
-        """Retrieve top 5 closest documents from Qdrant and return their content along with metadata."""
-        THRESHOLD = 0.7  # Threshold for similarity score
+    def run(self, query: str, company: str = None, tickers: list = None) -> list:
+        """Retrieve top 5 closest documents from Qdrant based on query embedding."""
         try:
             logger.info(f"Executing RAG query: {query}")
-            self.client.get_collections()
-            company_mapping = build_company_mapping()
-
-            if not company and " for " in query:
-                company_part = query.split(" for ")[-1]
-                company = company_part.strip()
-                if " in " in company_part:
-                    company = company_part.split(" in ")[0].strip()
-                elif " with " in company_part:
-                    company = company_part.split(" with ")[0].strip()
-
-            if company:
-                company = map_company_name(company, company_mapping)
-                if not company:
-                    logger.warning(f"Failed to map company: {company}")
-                    company = company_part.strip()
-                logger.debug(f"Mapped company for search: {company}")
-
-            year = None
-            year_match = re.search(r"in (\d{4})", query)
-            year = int(year_match.group(1)) if year_match else None
-
-            if not description and " with " in query:
-                description = query.split(" with ")[1].split(" in ")[0].strip() if " in " in query else query.split(" with ")[1].strip()
-            elif description == "report":
-                description = None
-
-            logger.debug(f"Query: {query}, company: {company}, description: {description}, year: {year}")
             query_embedding = self.model.encode(query).tolist()
 
-            all_companies_check = self.client.scroll(
-                collection_name=self.collection_name,
-                limit=100
-            )
-            qdrant_companies = list(set([hit.payload.get("company", "") for hit in all_companies_check[0]]))
-            logger.debug(f"Companies in Qdrant: {qdrant_companies}")
+            # Kiểm tra xem Qdrant có tài liệu không
+            collections = self.client.get_collections()
+            if not any(col.name == self.collection_name for col in collections.collections):
+                logger.error(f"Qdrant collection {self.collection_name} does not exist")
+                return [{"error": "No documents loaded in Qdrant. Please upload financial reports to ./data/rag_documents and reload."}]
 
-            if company:
-                company_check = self.client.scroll(
-                    collection_name=self.collection_name,
-                    scroll_filter=models.Filter(
-                        must=[models.FieldCondition(key="company", match=models.MatchText(text=company))]
-                    ),
-                    limit=1
-                )
-                if not company_check[0]:
-                    logger.warning(f"No documents found for company: {company}")
-                    return [{"error": f"No relevant documents found for {company} in the system. Ensure '{company}.pdf' is uploaded and processed."}]
-
-            filter_conditions = []
-            if company:
-                company_variants = [company]
-                if company in company_mapping.values():
-                    company_variants.append(company_mapping.get(normalize_company_name(company), company))
-                company_variants.extend([f"{company} Inc.", f"{company} Corporation", f"{company} Co.", f"The {company}"])
-                company_variants = list(set(company_variants))
-                logger.debug(f"Company variants for search: {company_variants}")
-                
-                company_conditions = [
-                    models.FieldCondition(
-                        key="company",
-                        match=models.MatchText(text=variant)
-                    )
-                    for variant in company_variants
-                ]
-                
-                filter_conditions.append(
-                    models.Filter(should=company_conditions)
-                )
-            if year:
-                filter_conditions.append(
-                    models.FieldCondition(
-                        key="year",
-                        match=models.MatchValue(value=year)
-                    )
-                )
-
+            # Tìm kiếm không dùng bộ lọc, lấy top 5 tài liệu
             search_result = self.client.search(
                 collection_name=self.collection_name,
                 query_vector=query_embedding,
-                query_filter=models.Filter(must=filter_conditions) if filter_conditions else None,
-                limit=5  # Lấy tối đa 5 tài liệu
+                limit=5  # Lấy 5 tài liệu gần nhất
             )
 
-            filtered_results = search_result
-            if description:
-                description_embedding = self.model.encode(description).tolist()
-                filtered_results = []
-                for hit in search_result:
-                    text_embedding = self.model.encode(hit.payload["text"]).tolist()
-                    similarity = cosine_similarity([description_embedding], [text_embedding])[0][0]
-                    if similarity > THRESHOLD:
-                        filtered_results.append(hit)
-                    logger.debug(f"Similarity for {hit.payload['filename']}: {similarity}")
+            if not search_result:
+                logger.warning(f"No documents found for query: {query}")
+                return [{"error": "No relevant financial reports found in Qdrant. Please ensure relevant documents are uploaded to ./data/rag_documents."}]
 
-            logger.debug(f"Found {len(search_result)} results before filtering, {len(filtered_results)} after filtering")
-            filtered_results = filtered_results[:5]  # Đảm bảo tối đa 5 tài liệu
-
-            if not filtered_results:
-                logger.warning(f"No relevant documents found for query: {query}")
-                return [{"error": f"No relevant documents found for {query} in the system."}]
-
-            # Trả về danh sách các tài liệu với nội dung và metadata
+            # Trả về danh sách tài liệu với nội dung và metadata
             results = [
                 {
-                    "document": hit.payload["text"],  # Đổi key từ 'text' thành 'document'
+                    "document": hit.payload["text"],
                     "filename": hit.payload["filename"],
                     "company": hit.payload["company"]
                 }
-                for hit in filtered_results
+                for hit in search_result
             ]
+            logger.info(f"Returning {len(results)} documents: {[r['filename'] for r in results]}")
             return results
 
         except Exception as e:

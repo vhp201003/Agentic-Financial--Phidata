@@ -77,7 +77,7 @@ async def process_query_generator(query: str):
                 await asyncio.sleep(0.1)
 
         result = await task
-        logger.info(f"Orchestrator result: {json.dumps(result, ensure_ascii=False)}")
+        # logger.info(f"Orchestrator result: {json.dumps(result, ensure_ascii=False)}")
 
         if result["status"] == "error":
             yield f"event: error\ndata: {json.dumps({'message': result['message']}, ensure_ascii=False)}\n\n"

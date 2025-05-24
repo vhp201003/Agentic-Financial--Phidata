@@ -28,4 +28,4 @@ formatting:
     default_template:
       vi: "Biểu đồ {vis_type} thể hiện dữ liệu."
 output_template:
-  vi: "{summary}"  # Chỉ hiển thị summary
+  vi: "{summary}"

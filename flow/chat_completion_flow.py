@@ -1,17 +1,17 @@
+# flow/chat_completion_flow.py
 import json
-import re
 import yaml
 from pathlib import Path
+from phi.agent import Agent, RunResponse
 from utils.logging import setup_logging
-from phi.agent import RunResponse
-import pandas as pd
+import re
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 logger = setup_logging()
 
 def load_config() -> dict:
     config_file = Path.joinpath(BASE_DIR, "config/chat_completion_config.yml")
-    print(f"Loading chat completion config from {config_file}")
+    logger.info(f"Loading chat completion config from {config_file}")
     with open(config_file, "r") as file:
         config = yaml.safe_load(file)
     logger.info("Successfully loaded chat completion config")
@@ -22,7 +22,6 @@ def prepare_rag_summary(rag_documents: list, config: dict) -> str:
         return config['formatting']['rag']['empty_message']['vi']
 
     rag_by_company = {}
-    # Regex để tìm các chỉ số tài chính kèm năm (ví dụ: "Net revenue FY 2022: $29,310")
     financial_metrics_pattern = re.compile(r'(Net revenue|Net income|Operating expenses|Diluted.*earnings per share|Total volume|Payments volume|Transactions processed)\s*(FY\s*\d{4})?\s*[:=]?\s*\$?([\d,.]+[TBM]?|\d+\.\d+[TBM]?)', re.IGNORECASE)
 
     for doc in rag_documents:
@@ -30,26 +29,21 @@ def prepare_rag_summary(rag_documents: list, config: dict) -> str:
         if company not in rag_by_company:
             rag_by_company[company] = []
         
-        # Trích xuất các chỉ số tài chính
         content = doc['document']
         metrics = financial_metrics_pattern.findall(content)
         
-        # Nhóm dữ liệu theo năm
         metrics_by_year = {}
         for metric, year, value in metrics:
             year = year.strip() if year else "Unknown Year"
             if year not in metrics_by_year:
                 metrics_by_year[year] = []
-            # Chuẩn hóa giá trị: loại bỏ dấu phẩy và ký tự không cần thiết
             value = value.replace(',', '').replace('$', '')
             metrics_by_year[year].append(f"{metric}: {value}")
         
-        # Định dạng lại metrics theo năm
         formatted_metrics = []
         for year, metric_list in metrics_by_year.items():
             formatted_metrics.append(f"{year}: {', '.join(metric_list)}")
         
-        # Nếu không tìm thấy chỉ số, lấy tối đa 1000 ký tự
         if not formatted_metrics:
             content = content[:1000] + ("..." if len(content) > 1000 else "")
             formatted_metrics = [content]
@@ -58,7 +52,7 @@ def prepare_rag_summary(rag_documents: list, config: dict) -> str:
 
     return "\n".join(f"{company}: " + "; ".join(entries) for company, entries in rag_by_company.items())
 
-def prepare_sql_summary(sql_response: str, config: dict, tickers: list, required_columns: list = None, dashboard_enabled: bool = False) -> str:
+def prepare_sql_summary(sql_response: str, config: dict, tickers: list) -> str:
     if "Dữ liệu từ cơ sở dữ liệu" not in sql_response:
         return config['formatting']['sql']['empty_message']['vi']
 
@@ -73,44 +67,14 @@ def prepare_sql_summary(sql_response: str, config: dict, tickers: list, required
             return config['formatting']['sql']['empty_message']['vi']
 
         summaries = []
-        required_columns = required_columns or []
-        if dashboard_enabled and required_columns and all(col in data[0] for col in required_columns):
-            if "symbol" in required_columns and "close_price" in required_columns:
-                ticker_map = {record['symbol']: record['close_price'] for record in data}
-                formatted_data = [f"{ticker}: {ticker_map[ticker]} USD" for ticker in tickers if ticker in ticker_map]
-                summaries.append(", ".join(formatted_data))
-            elif "avg_close_price" in required_columns:
-                formatted_data = [f"{tickers[0] if tickers else 'Company'}: {record['avg_close_price']} USD" for record in data]
-                summaries.append(", ".join(formatted_data))
-            elif "daily_return" in required_columns:
-                valid_returns = [record['daily_return'] for record in data if isinstance(record['daily_return'], (int, float)) and not pd.isna(record['daily_return'])]
-                if valid_returns:
-                    avg_return = sum(valid_returns) / len(valid_returns)
-                    summaries.append(f"{tickers[0] if tickers else 'Company'} Daily Returns: Trung bình {avg_return:.4f}")
-                else:
-                    summaries.append("Không có dữ liệu lợi nhuận hàng ngày hợp lệ.")
-            elif "sector" in required_columns and "count" in required_columns:
-                formatted_data = [f"{record['sector']}: {record['count']}" for record in data]
-                summaries.append(", ".join(formatted_data))
-            elif "date" in required_columns and "close_price" in required_columns:
-                df = pd.DataFrame(data)
-                df['month'] = pd.to_datetime(df['date']).dt.strftime('%Y-%m')
-                monthly_avg = df.groupby('month')['close_price'].mean().round(2)
-                formatted_data = [f"{month}: {price} USD" for month, price in monthly_avg.items()]
-                summaries.append(", ".join(formatted_data))
-            elif "avg_daily_volume" in required_columns and "avg_closing_price" in required_columns:
-                formatted_data = [f"{record['symbol']}: Volume {record['avg_daily_volume']:.0f}, Price {record['avg_closing_price']:.2f} USD" for record in data[:5]]
-                summaries.append(", ".join(formatted_data) + (", ..." if len(data) > 5 else ""))
-        else:
-            # Khi Dashboard: false, không validate required_columns, chỉ hiển thị dữ liệu thô
-            for record in data:
-                for key, value in record.items():
-                    summaries.append(f"{key.replace('_', ' ').title()}: {value}")
+        for record in data:
+            for key, value in record.items():
+                summaries.append(f"{key.replace('_', ' ').title()}: {value}")
         return "\n".join(summaries)
     except json.JSONDecodeError as e:
         logger.error(f"Failed to parse SQL data: {str(e)}")
         return config['formatting']['sql']['empty_message']['vi']
-    
+
 def prepare_dashboard_summary(dashboard_info: dict, config: dict) -> str:
     if not dashboard_info.get('enabled', False) or not isinstance(dashboard_info.get('data', []), list) or len(dashboard_info['data']) == 0:
         return config['formatting']['dashboard']['empty_message']['vi']
@@ -137,103 +101,77 @@ def prepare_dashboard_summary(dashboard_info: dict, config: dict) -> str:
             summary += " " + ", ".join(key_points) + "."
     return summary
 
-def chat_completion_flow(query: str, rag_documents: list, sql_response: str, dashboard_info: dict, chat_completion_agent, tickers: list = None) -> dict:
+def chat_completion_flow(query: str, rag_documents: list, sql_response: str, dashboard_info: dict, chat_completion_agent: Agent, tickers: list = None) -> dict:
+    config = load_config()
     try:
-        if not isinstance(query, str):
-            logger.error(f"Invalid query format: {type(query)}")
-            raise ValueError("Query must be a string")
-        if not isinstance(rag_documents, list):
-            logger.error(f"Invalid RAG documents format: {type(rag_documents)}")
-            raise ValueError("RAG documents must be a list")
-        if not isinstance(sql_response, str):
-            logger.error(f"Invalid SQL response format: {type(sql_response)}")
-            raise ValueError("SQL response must be a string")
-        if not isinstance(dashboard_info, dict):
-            logger.error(f"Invalid dashboard info format: {type(dashboard_info)}")
-            raise ValueError("Dashboard info must be a dict")
-
-        config = load_config()
-
+        # Prepare input for chat completion
         rag_summary = prepare_rag_summary(rag_documents, config)
-        sql_summary = prepare_sql_summary(sql_response, config, tickers or [], dashboard_info.get('visualization', {}).get('required_columns', []), dashboard_info.get('enabled', False))
+        sql_summary = prepare_sql_summary(sql_response, config, tickers)
         dashboard_summary = prepare_dashboard_summary(dashboard_info, config)
 
-        # Kiểm tra xem có dữ liệu thực sự không
-        has_rag_data = rag_summary != config['formatting']['rag']['empty_message']['vi']
-        has_sql_data = sql_summary != config['formatting']['sql']['empty_message']['vi']
-        has_dashboard_data = dashboard_summary != config['formatting']['dashboard']['empty_message']['vi']
-        has_data = has_rag_data or has_sql_data or has_dashboard_data
-
-        # Nếu RAG có dữ liệu, kiểm tra xem có đủ thông tin để phân tích không
-        if has_rag_data:
-            # Kiểm tra xem RAG Summary có chứa dữ liệu đa năm không
-            years_pattern = re.compile(r'FY\s*\d{4}')
-            years_found = years_pattern.findall(rag_summary)
-            if len(set(years_found)) < 2:
-                logger.warning("RAG Summary contains data for less than 2 years, trend analysis may be limited.")
-
-        chat_input = (
+        input_data = (
             f"Query: {query}\n"
             f"Tickers: {json.dumps(tickers or [])}\n"
-            f"RAG Summary:\n{rag_summary}\n"
-            f"SQL Summary:\n{sql_summary}\n"
-            f"Dashboard Summary:\n{dashboard_summary}"
+            f"RAG Summary: {rag_summary[:1000]}...\n"
+            f"SQL Summary: {sql_summary[:1000]}...\n"
+            f"Dashboard Summary: {dashboard_summary[:1000]}..."
         )
-        logger.info(f"Chat input for Chat Completion Agent: {chat_input}")
+        logger.info(f"Chat input for Chat Completion Agent: {input_data[:500]}...")
 
-        try:
-            response = chat_completion_agent.run(chat_input)
-            token_metrics = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
-            if isinstance(response, RunResponse):
-                metrics = getattr(response, 'metrics', {})
-                token_metrics["input_tokens"] = metrics.get('input_tokens', 0)
-                token_metrics["output_tokens"] = metrics.get('output_tokens', 0)
-                token_metrics["total_tokens"] = metrics.get('total_tokens', token_metrics["input_tokens"] + token_metrics["output_tokens"])
-                logger.info(f"[ChatCompletion] Token metrics: Input tokens={token_metrics['input_tokens']}, Output tokens={token_metrics['output_tokens']}, Total tokens={token_metrics['total_tokens']}")
-                response = response.content
-            # answer_match = re.search(r'Answer: (.*?)\nSummary:', response, re.DOTALL)  # Bỏ phần lấy answer
-            summary_match = re.search(r'Summary: (.*)', response, re.DOTALL)
-            if not summary_match:
-                logger.error(f"Invalid response format from Groq: {response}")
-                summary = f"Không có dữ liệu để trả lời truy vấn '{query}'."
-            else:
-                summary = summary_match.group(1).strip()
-        except Exception as e:
-            logger.error(f"Error calling Chat Completion Agent: {str(e)}")
-            match = re.search(r'\[(.*)\]', sql_response, re.DOTALL)
-            if match:
-                try:
-                    data = json.loads(f"[{match.group(1)}]")
-                    if data and 'avg_close_price' in data[0]:
-                        summary = f"Dữ liệu từ cơ sở dữ liệu cho thấy giá đóng cửa trung bình của {tickers[0] if tickers else 'Company'} là {data[0]['avg_close_price']} USD. Không có tài liệu RAG để phân tích thêm. Không có dữ liệu biểu đồ cho truy vấn này."
-                    elif data and 'sector' in data[0] and 'count' in data[0]:
-                        summary = f"Dữ liệu từ cơ sở dữ liệu cho thấy {data[0]['sector']} có {data[0]['count']} công ty, theo sau là {data[1]['sector']} với {data[1]['count']} công ty. Biểu đồ tròn thể hiện rõ phân phối này. Không có tài liệu RAG để phân tích thêm."
-                    elif data and 'date' in data[0] and 'close_price' in data[0]:
-                        df = pd.DataFrame(data)
-                        df['month'] = pd.to_datetime(df['date']).dt.strftime('%Y-%m')
-                        monthly_avg = df.groupby('month')['close_price'].mean().round(2)
-                        summary = f"Dữ liệu từ cơ sở dữ liệu cung cấp giá đóng cửa hàng tháng của {tickers[0] if tickers else 'Company'} cho năm 2024. Giá trung bình theo tháng dao động từ {monthly_avg.min()} USD đến {monthly_avg.max()} USD. Biểu đồ boxplot giúp trực quan hóa sự biến động giá theo từng tháng."
-                    else:
-                        summary = f"Không có dữ liệu để trả lời truy vấn '{query}'."
-                except json.JSONDecodeError:
-                    summary = f"Không có dữ liệu để trả lời truy vấn '{query}'."
-            else:
-                summary = f"Không có dữ liệu để trả lời truy vấn '{query}'."
+        # Update system prompt for chat completion agent
+        chat_completion_agent.system_prompt = """
+You are a financial analysis assistant. Your task is to analyze the provided query, tickers, RAG summary, SQL summary, and dashboard summary, and generate a concise response summarizing the relevant financial information. 
 
-        # Chỉ sử dụng summary trong template
-        template = config['output_template']['vi']
-        final_response = template.format(
-            summary=summary  # Chỉ sử dụng summary
-        )
-        logger.info(f"Final response: {final_response}")
+- Focus on the query and tickers provided.
+- Extract key financial metrics (e.g., revenue, profit, assets, liabilities) from the RAG summary if available.
+- If SQL or dashboard data is relevant, include it.
+- Return a short, clear response as a string (max 500 characters). Do not use markdown or extra formatting.
+- If no relevant data is found, return: "Không có dữ liệu để trả lời truy vấn."
+
+Example:
+Query: annual report of Apple
+Tickers: ["AAPL"]
+RAG Summary: Apple: 2025 Net revenue: 219,659M USD; Net income: 103,142M USD...
+Response: Apple's 2025 annual report shows net revenue of $219,659M and net income of $103,142M.
+"""
+        # Run chat completion agent
+        response = chat_completion_agent.run(input_data)
+        logger.debug(f"Raw response from Groq: {response}")
+
+        # Handle response
+        if isinstance(response, RunResponse):
+            response_content = response.content if response.content else config['formatting']['chat']['empty_message']['vi']
+        elif isinstance(response, dict) and 'content' in response:
+            response_content = response['content']
+        elif isinstance(response, str):
+            response_content = response.strip()
+        else:
+            logger.error(f"Unexpected response type from Groq: {type(response)}")
+            response_content = config['formatting']['chat']['empty_message']['vi']
+
+        # Extract metrics if available
+        token_metrics = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+        if isinstance(response, RunResponse) and hasattr(response, 'metrics'):
+            metrics = response.metrics
+            token_metrics["input_tokens"] = metrics.get('input_tokens', 0)
+            token_metrics["output_tokens"] = metrics.get('output_tokens', 0)
+            token_metrics["total_tokens"] = metrics.get('total_tokens', token_metrics["input_tokens"] + token_metrics["output_tokens"])
+        elif isinstance(response, dict) and 'metrics' in response:
+            metrics = response.get('metrics', {})
+            token_metrics["input_tokens"] = metrics.get('input_tokens', 0)
+            token_metrics["output_tokens"] = metrics.get('output_tokens', 0)
+            token_metrics["total_tokens"] = metrics.get('total_tokens', token_metrics["input_tokens"] + token_metrics["output_tokens"])
+
+        logger.info(f"[ChatCompletion] Token metrics: Input tokens={token_metrics['input_tokens']}, Output tokens={token_metrics['output_tokens']}, Total tokens={token_metrics['total_tokens']}")
+
         return {
-            "content": final_response,
+            "content": response_content,
             "token_metrics": token_metrics
         }
 
     except Exception as e:
-        logger.error(f"Error in chat completion flow: {str(e)}")
+        logger.error(f"Error in chat_completion_flow: {str(e)}")
         return {
-            "content": f"Không có dữ liệu để trả lời truy vấn '{query}'.",
+            "content": config['formatting']['chat']['empty_message']['vi'],
             "token_metrics": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
         }
