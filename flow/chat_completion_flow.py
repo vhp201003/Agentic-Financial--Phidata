@@ -58,32 +58,6 @@ def prepare_rag_summary(rag_documents: list, config: dict) -> str:
 
     return "\n".join(f"{company}: " + "; ".join(entries) for company, entries in rag_by_company.items())
 
-def prepare_dashboard_summary(dashboard_info: dict, config: dict) -> str:
-    if not dashboard_info.get('enabled', False) or not isinstance(dashboard_info.get('data', []), list) or len(dashboard_info['data']) == 0:
-        return config['formatting']['dashboard']['empty_message']['vi']
-
-    vis_type = dashboard_info['visualization'].get('type', 'none')
-    ui_requirements = dashboard_info['visualization'].get('ui_requirements', {})
-    template = config['formatting']['dashboard'].get('vis_type_templates', {}).get(vis_type, config['formatting']['dashboard'].get('default_template', {'vi': "Biểu đồ {vis_type} thể hiện dữ liệu."}))
-    
-    summary = template['vi'].format(
-        vis_type=vis_type,
-        group_col=ui_requirements.get('group_col', 'group'),
-        value_col=ui_requirements.get('value_col', 'value'),
-        x_col=ui_requirements.get('x_col', 'x'),
-        y_col=ui_requirements.get('y_col', 'y'),
-        category_col=ui_requirements.get('category_col', 'category')
-    )
-
-    if dashboard_info['data']:
-        key_points = []
-        for record in dashboard_info['data'][:3]:
-            if 'sector' in record and 'proportion' in record:
-                key_points.append(f"{record['sector']} ({record['proportion']}%)")
-        if key_points:
-            summary += " " + ", ".join(key_points) + "."
-    return summary
-
 def prepare_sql_summary(sql_response: str, config: dict, tickers: list, required_columns: list = None, dashboard_enabled: bool = False) -> str:
     if "Dữ liệu từ cơ sở dữ liệu" not in sql_response:
         return config['formatting']['sql']['empty_message']['vi']
@@ -136,6 +110,32 @@ def prepare_sql_summary(sql_response: str, config: dict, tickers: list, required
     except json.JSONDecodeError as e:
         logger.error(f"Failed to parse SQL data: {str(e)}")
         return config['formatting']['sql']['empty_message']['vi']
+    
+def prepare_dashboard_summary(dashboard_info: dict, config: dict) -> str:
+    if not dashboard_info.get('enabled', False) or not isinstance(dashboard_info.get('data', []), list) or len(dashboard_info['data']) == 0:
+        return config['formatting']['dashboard']['empty_message']['vi']
+
+    vis_type = dashboard_info['visualization'].get('type', 'none')
+    ui_requirements = dashboard_info['visualization'].get('ui_requirements', {})
+    template = config['formatting']['dashboard'].get('vis_type_templates', {}).get(vis_type, config['formatting']['dashboard'].get('default_template', {'vi': "Biểu đồ {vis_type} thể hiện dữ liệu."}))
+    
+    summary = template['vi'].format(
+        vis_type=vis_type,
+        group_col=ui_requirements.get('group_col', 'group'),
+        value_col=ui_requirements.get('value_col', 'value'),
+        x_col=ui_requirements.get('x_col', 'x'),
+        y_col=ui_requirements.get('y_col', 'y'),
+        category_col=ui_requirements.get('category_col', 'category')
+    )
+
+    if dashboard_info['data']:
+        key_points = []
+        for record in dashboard_info['data'][:3]:
+            if 'sector' in record and 'proportion' in record:
+                key_points.append(f"{record['sector']} ({record['proportion']}%)")
+        if key_points:
+            summary += " " + ", ".join(key_points) + "."
+    return summary
 
 def chat_completion_flow(query: str, rag_documents: list, sql_response: str, dashboard_info: dict, chat_completion_agent, tickers: list = None) -> dict:
     try:

@@ -32,6 +32,7 @@ h2 { color: #4CAF50; }
 table { width: 100%; border-collapse: collapse; }
 th, td { border: 1px solid #ddd; padding: 8px; text-align: center; }
 th { background-color: #007bff; color: white; }
+.thinking { color: #888; font-style: italic; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -52,8 +53,121 @@ def load_visualization_metadata():
     except Exception as e:
         logger.error(f"Error loading visualization metadata: {str(e)}")
         return []
+def process_stream_response(prompt, base_url):
+    # Expander chỉ chứa thinking
+    with st.expander("Quá trình suy nghĩ" if language == "vi" else "Thinking Process", expanded=True):
+        thinking_container = st.empty()
+        thinking_messages = []  # Danh sách thông điệp để lưu lịch sử
 
-SUPPORTED_VISUALIZATION_TYPES = load_visualization_metadata()
+        assistant_message = {
+            "role": "assistant",
+            "content": "",
+            "timestamp": datetime.now().strftime("%H:%M:%S %d/%m/%Y"),
+            "visualizations": []
+        }
+
+        def stream_message(message):
+            """Hàm hỗ trợ để stream từng thông điệp với st.write_stream."""
+            for char in message:
+                yield char
+                time.sleep(0.02)  # Tốc độ gõ chữ
+            yield "\n"  # Thêm xuống dòng sau mỗi thông điệp
+
+        token_metrics = None  # Khởi tạo để tránh lỗi undefined
+        try:
+            response = requests.get(f"{base_url}/process_query?query={prompt}", stream=True, timeout=30)
+            response.raise_for_status()
+
+            current_event = None
+            current_data = ""
+
+            for line in response.iter_lines():
+                if line:
+                    decoded_line = line.decode('utf-8').strip()
+                    logger.info(f"Received stream line: {decoded_line}")
+
+                    if decoded_line.startswith("event:"):
+                        current_event = decoded_line.split(":", 1)[1].strip()
+                    elif decoded_line.startswith("data:"):
+                        current_data = decoded_line[5:].strip()
+                        try:
+                            data = json.loads(current_data)
+                        except json.JSONDecodeError as e:
+                            logger.error(f"Error decoding JSON: {e}, data: {current_data}")
+                            continue
+
+                        if current_event == "thinking":
+                            message = data['message']
+                            # Định dạng thông điệp
+                            if message.startswith(("SQL:", "Kết quả SQL:", "Orchestrator:", "RAG:", "Chat Completion:", "Visualized:")):
+                                formatted_message = f"```json\n{message}\n```"
+                            else:
+                                formatted_message = f"- {message}"
+                            thinking_messages.append(formatted_message)
+                            # Stream thông điệp mới và hiển thị lịch sử
+                            thinking_container.markdown("\n".join(thinking_messages), unsafe_allow_html=True)
+                            st.write_stream(stream_message(formatted_message))
+                        elif current_event == "result":
+                            thinking_container.empty()
+                            response_json = data
+                            assistant_message["content"] = response_json.get('message', 'Không có phản hồi chi tiết.')
+                            if response_json.get('status') == 'success':
+                                if 'data' in response_json and 'dashboard' in response_json['data'] and response_json['data']['dashboard']['enabled']:
+                                    dashboard_info = response_json['data']['dashboard']
+                                    create_dashboard(
+                                        dashboard_info['data'],
+                                        dashboard_info['visualization'],
+                                        assistant_message["timestamp"],
+                                        assistant_message["visualizations"]
+                                    )
+                                st.session_state.logs = response_json.get('logs', 'Không có log.')
+                                token_metrics = response_json['data'].get('token_metrics')
+                            else:
+                                assistant_message["content"] = f"Lỗi: {response_json.get('message', 'Không có thông tin lỗi.')}"
+                                st.session_state.logs = response_json.get('logs', 'Không có log.')
+                            break
+                        elif current_event == "error":
+                            thinking_container.empty()
+                            assistant_message["content"] = f"Lỗi: {data.get('message', 'Không có thông tin lỗi.')}"
+                            st.session_state.logs = 'Lỗi khi xử lý stream.'
+                            break
+
+        except Exception as e:
+            logger.error(f"Error in stream processing: {str(e)}")
+            thinking_container.empty()
+            assistant_message["content"] = f"Lỗi: Không thể kết nối đến API. {str(e)}" if language == "vi" else f"Error: Could not connect to API. {str(e)}"
+            st.session_state.logs = 'Lỗi khi kết nối API, không có log.' if language == "vi" else 'Error connecting to API, no logs.'
+
+    # Phản hồi cuối cùng nằm ngoài expander
+    st.session_state.chat_history.append(assistant_message)
+    with st.chat_message("assistant"):
+        st.markdown(f"**Assistant** - {assistant_message['timestamp']}")
+        st.markdown(assistant_message["content"], unsafe_allow_html=True)
+        for vis in assistant_message["visualizations"]:
+            st.plotly_chart(vis["fig"], key=vis["key"])
+
+    # Hiển thị token metrics
+    if token_metrics:
+        with st.expander("Thông tin sử dụng Token" if language == "vi" else "Token Usage", expanded=False):
+            st.markdown("**Chi tiết sử dụng Token:**")
+            for agent, metrics in token_metrics.items():
+                input_tokens = metrics['input_tokens'][0] if isinstance(metrics['input_tokens'], list) and metrics['input_tokens'] else metrics['input_tokens']
+                output_tokens = metrics['output_tokens'][0] if isinstance(metrics['output_tokens'], list) and metrics['output_tokens'] else metrics['output_tokens']
+                total_tokens_value = metrics['total_tokens'][0] if isinstance(metrics['total_tokens'], list) and metrics['total_tokens'] else metrics['total_tokens']
+                st.markdown(f"- **{agent.replace('_', ' ').title()}:** Input: {input_tokens}, Output: {output_tokens}, Total: {total_tokens_value}")
+            total_tokens_sum = sum(
+                metrics['total_tokens'][0] if isinstance(metrics['total_tokens'], list) and metrics['total_tokens'] else metrics['total_tokens']
+                for metrics in token_metrics.values()
+            )
+            st.markdown(
+                f"<p style='text-align: center; color: #888;'>Tổng số token sử dụng: {total_tokens_sum}</p>",
+                unsafe_allow_html=True
+            )
+    else:
+        st.markdown(
+            "<p style='text-align: center; color: #888;'>Không có thông tin token.</p>",
+            unsafe_allow_html=True
+        )
 
 def normalize_visualization_type(vis_type: str) -> str:
     """Normalize visualization type: replace spaces with underscores and convert to lowercase."""
@@ -463,6 +577,8 @@ def create_dashboard(data, visualization, timestamp, vis_list):
             st.write(f"Debug: Error in create_dashboard: {str(e)}")
         st.markdown(f"<p style='text-align: center; color: #888;'>Error rendering chart: {str(e)}. Please check the data or contact support.</p>", unsafe_allow_html=True)
 
+SUPPORTED_VISUALIZATION_TYPES = load_visualization_metadata()
+
 with st.sidebar:
     st.title('Financial Assistant Chatbot')
     st.write('A financial analysis chatbot powered by API.')
@@ -518,82 +634,5 @@ if prompt := st.chat_input(placeholder):
         st.markdown(f"**User** - {timestamp}")
         st.write(prompt)
 
-    if st.session_state.chat_history[-1]["role"] != "assistant":
-        with st.chat_message("assistant"):
-            with st.spinner("Processing..." if language == "en" else "Đang xử lý..."):
-                try:
-                    response = requests.post(API_URL, json={"query": prompt})
-                    response_data = response.json()
-                    response_json = json.loads(response_data['response'])
-                    logger.info(f"Response data: {response_data}")
-                    logger.info(f"Parsed response JSON: {response_json}")
-                    if response_json['status'] == 'success':
-                        timestamp = datetime.now().strftime("%H:%M:%S %d/%m/%Y")
-                        message = response_json['message']
-                        assistant_message = {
-                            "role": "assistant",
-                            "content": message,
-                            "timestamp": timestamp,
-                            "visualizations": []
-                        }
-                        if 'data' in response_json and 'dashboard' in response_json['data'] and response_json['data']['dashboard']['enabled']:
-                            dashboard_info = response_json['data']['dashboard']
-                            create_dashboard(dashboard_info['data'], dashboard_info['visualization'], timestamp, assistant_message["visualizations"])
-                        st.session_state.chat_history.append(assistant_message)
-                        st.session_state.dashboard_info = None
-                        st.session_state.logs = response_json.get('logs', 'No logs were sent.' if language == "en" else 'Không có log nào được gửi lên.')
-                        st.markdown(f"**Assistant** - {timestamp}")
-                        st.markdown(message, unsafe_allow_html=True)
-                        for vis in assistant_message["visualizations"]:
-                            st.plotly_chart(vis["fig"], key=vis["key"])
-                        
-                        # Display token metrics
-                        if 'data' in response_json and 'token_metrics' in response_json['data']:
-                            token_metrics = response_json['data']['token_metrics']
-                            with st.expander("Token Usage" if language == "en" else "Thông tin sử dụng Token", expanded=False):
-                                st.markdown("**Token Usage Details:**")
-                                for agent, metrics in token_metrics.items():
-                                    # Loại bỏ list khi hiển thị
-                                    input_tokens = metrics['input_tokens'][0] if isinstance(metrics['input_tokens'], list) and metrics['input_tokens'] else metrics['input_tokens']
-                                    output_tokens = metrics['output_tokens'][0] if isinstance(metrics['output_tokens'], list) and metrics['output_tokens'] else metrics['output_tokens']
-                                    total_tokens_value = metrics['total_tokens'][0] if isinstance(metrics['total_tokens'], list) and metrics['total_tokens'] else metrics['total_tokens']
-                                    st.markdown(f"- **{agent.replace('_', ' ').title()}:** Input: {input_tokens}, Output: {output_tokens}, Total: {total_tokens_value}")
-                                # Tính tổng sau khi loại bỏ list
-                                total_tokens_sum = sum(
-                                    metrics['total_tokens'][0] if isinstance(metrics['total_tokens'], list) and metrics['total_tokens'] else metrics['total_tokens']
-                                    for metrics in token_metrics.values()
-                                )
-                                st.markdown(
-                                    f"<p style='text-align: center; color: #888;'>Total tokens used: {total_tokens_sum}</p>",
-                                    unsafe_allow_html=True
-                                )
-                        else:
-                            st.markdown(
-                                "<p style='text-align: center; color: #888;'>No token metrics available.</p>",
-                                unsafe_allow_html=True
-                            )
-                    else:
-                        timestamp = datetime.now().strftime("%H:%M:%S %d/%m/%Y")
-                        st.session_state.chat_history.append({
-                            "role": "assistant",
-                            "content": f"Error: {response_json['message']}",
-                            "timestamp": timestamp,
-                            "visualizations": []
-                        })
-                        st.session_state.dashboard_info = None
-                        st.session_state.logs = response_json.get('logs', 'No logs were sent.' if language == "en" else 'Không có log nào được gửi lên.')
-                        st.markdown(f"**Assistant** - {timestamp}")
-                        st.write(f"Error: {response_json['message']}")
-                except Exception as e:
-                    timestamp = datetime.now().strftime("%H:%M:%S %d/%m/%Y")
-                    st.session_state.chat_history.append({
-                        "role": "assistant",
-                        "content": f"Error: Could not connect to API. {str(e)}" if language == "en" else f"Lỗi: Không thể kết nối đến API. {str(e)}",
-                        "timestamp": timestamp,
-                        "visualizations": []
-                    })
-                    st.session_state.dashboard_info = None
-                    st.session_state.logs = 'Error connecting to API, no logs.' if language == "en" else 'Lỗi khi kết nối API, không có log.'
-                    st.markdown(f"**Assistant** - {timestamp}")
-                    st.write(f"Error: Could not connect to API. {str(e)}" if language == "en" else f"Lỗi: Không thể kết nối đến API. {str(e)}")
-                    st.markdown(f"<p style='text-align: center; color: #888;'>Error: Could not connect to API. {str(e)}</p>", unsafe_allow_html=True)
+    base_url = API_URL.replace("/team", "")  # Đảm bảo dùng base URL đúng
+    process_stream_response(prompt, base_url)

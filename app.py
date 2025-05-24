@@ -51,14 +51,22 @@ def normalize_company_name(query):
     return standardized_query
 
 async def process_query_generator(query: str):
-    """Generator to stream processing events and results."""
     try:
         logger.info(f"Received query: {query}")
         normalized_query = normalize_company_name(query)
         thinking_queue = queue.Queue()
 
         async def run_orchestrator():
-            return orchestrator_flow(normalized_query, orchestrator, text_to_sql_agent, sql_tool, rag_agent, rag_tool, chat_completion_agent, thinking_queue)
+            return await asyncio.to_thread(
+                orchestrator_flow,
+                normalized_query,
+                orchestrator,
+                text_to_sql_agent,
+                sql_tool,
+                rag_tool,
+                chat_completion_agent,
+                thinking_queue=thinking_queue
+            )
 
         task = asyncio.create_task(run_orchestrator())
         while not task.done():
@@ -71,14 +79,14 @@ async def process_query_generator(query: str):
         result = await task
         logger.info(f"Orchestrator result: {json.dumps(result, ensure_ascii=False)}")
 
-        if result["status"] == "error" or result["data"].get("result") is None or not result["data"]["result"]:
-            yield f"event: error\ndata: {json.dumps({'message': 'Sorry, an error occurred while processing your request. Please try again later.'}, ensure_ascii=False)}\n\n"
+        if result["status"] == "error":
+            yield f"event: error\ndata: {json.dumps({'message': result['message']}, ensure_ascii=False)}\n\n"
             return
 
         yield f"event: result\ndata: {json.dumps(result, ensure_ascii=False)}\n\n"
     except Exception as e:
         logger.error(f"Error in process_query_generator: {str(e)}")
-        yield f"event: error\ndata: {json.dumps({'message': 'Sorry, an error occurred while processing your request. Please try again later.'}, ensure_ascii=False)}\n\n"
+        yield f"event: error\ndata: {json.dumps({'message': f'Internal server error: {str(e)}'}, ensure_ascii=False)}\n\n"
 
 @app.get("/process_query")
 async def process_query(request: Request, query: str):

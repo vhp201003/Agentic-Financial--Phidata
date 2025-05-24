@@ -29,7 +29,9 @@ def sql_flow(sub_query: str, sql_agent, sql_tool, metadata: dict = None) -> dict
             logger.error(f"Failed to generate SQL query: {sql_response}")
             return {
                 "response_for_chat": sql_response,
-                "actual_result": []
+                "actual_result": [],
+                "token_metrics": token_metrics,
+                "sql_query": "Không tạo được câu SQL"
             }
         
         sql_query = re.sub(r'```(?:sql|json)?|```|\n|\t', '', sql_response).strip()
@@ -44,7 +46,9 @@ def sql_flow(sub_query: str, sql_agent, sql_tool, metadata: dict = None) -> dict
             logger.error(f"Error executing query with sql_tool: {str(e)}")
             return {
                 "response_for_chat": f"Lỗi thực thi query: {str(e)}",
-                "actual_result": []
+                "actual_result": [],
+                "token_metrics": token_metrics,
+                "sql_query": sql_query
             }
         
         result_data = tool_response_dict["data"].get("result", [])
@@ -54,10 +58,11 @@ def sql_flow(sub_query: str, sql_agent, sql_tool, metadata: dict = None) -> dict
             logger.error(f"Invalid result data format: {type(result_data)}")
             return {
                 "response_for_chat": "Dữ liệu trả về không hợp lệ từ cơ sở dữ liệu.",
-                "actual_result": []
+                "actual_result": [],
+                "token_metrics": token_metrics,
+                "sql_query": sql_query
             }
 
-        # Bỏ qua validate required_columns, cứ có dữ liệu là trả về
         response_for_chat = (
             f"Dữ liệu từ cơ sở dữ liệu cho truy vấn '{sub_query}': {json.dumps(result_data, ensure_ascii=False)}"
             if result_data
@@ -67,12 +72,14 @@ def sql_flow(sub_query: str, sql_agent, sql_tool, metadata: dict = None) -> dict
         return {
             "response_for_chat": response_for_chat,
             "actual_result": result_data,
-            "token_metrics": token_metrics
+            "token_metrics": token_metrics,
+            "sql_query": sql_query  # Thêm câu SQL vào final_response
         }
     except Exception as e:
         logger.error(f"Error in sql_flow: {str(e)}")
         return {
             "response_for_chat": f"Lỗi trong sql_flow: {str(e)}",
             "actual_result": [],
-            "token_metrics": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+            "token_metrics": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+            "sql_query": "Lỗi trong sql_flow"
         }

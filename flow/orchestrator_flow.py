@@ -38,7 +38,6 @@ def process_response(response: any, context: str) -> tuple[dict, dict]:
     try:
         if isinstance(response, RunResponse):
             metrics = getattr(response, 'metrics', {})
-            # Loại bỏ list nếu có, lấy giá trị đầu tiên
             input_tokens = metrics.get('input_tokens', 0)
             output_tokens = metrics.get('output_tokens', 0)
             token_metrics["input_tokens"] = input_tokens[0] if isinstance(input_tokens, list) and input_tokens else input_tokens
@@ -99,7 +98,6 @@ def limit_records(data: list, max_records: int = 5, for_dashboard: bool = False,
     
     if for_dashboard:
         max_dashboard_records = 10  # Reduced for Visualize Agent
-        # Limit to max 5 companies
         if data and 'symbol' in data[0]:
             unique_symbols = list(dict.fromkeys([record['symbol'] for record in data]))
             filtered_data = [record for record in data if record['symbol'] in unique_symbols]
@@ -120,7 +118,135 @@ def limit_records(data: list, max_records: int = 5, for_dashboard: bool = False,
     
     return data  # No limit for other cases
 
-def orchestrator_flow(query: str, orchestrator: Agent, sql_agent, sql_tool, rag_tool, chat_completion_agent, thinking_queue=None) -> dict:
+def load_config() -> dict:
+    config_file = Path.joinpath(BASE_DIR, "config/chat_completion_config.yml")
+    print(f"Loading chat completion config from {config_file}")
+    with open(config_file, "r") as file:
+        config = yaml.safe_load(file)
+    logger.info("Successfully loaded chat completion config")
+    return config
+
+def prepare_rag_summary(rag_documents: list, config: dict) -> str:
+    if not rag_documents or not all(isinstance(doc, dict) and 'document' in doc and 'filename' in doc and 'company' in doc for doc in rag_documents):
+        return config['formatting']['rag']['empty_message']['vi']
+
+    rag_by_company = {}
+    # Regex để tìm các chỉ số tài chính kèm năm (ví dụ: "Net revenue FY 2022: $29,310")
+    financial_metrics_pattern = re.compile(r'(Net revenue|Net income|Operating expenses|Diluted.*earnings per share|Total volume|Payments volume|Transactions processed)\s*(FY\s*\d{4})?\s*[:=]?\s*\$?([\d,.]+[TBM]?|\d+\.\d+[TBM]?)', re.IGNORECASE)
+
+    for doc in rag_documents:
+        company = doc['company']
+        if company not in rag_by_company:
+            rag_by_company[company] = []
+        
+        # Trích xuất các chỉ số tài chính
+        content = doc['document']
+        metrics = financial_metrics_pattern.findall(content)
+        
+        # Nhóm dữ liệu theo năm
+        metrics_by_year = {}
+        for metric, year, value in metrics:
+            year = year.strip() if year else "Unknown Year"
+            if year not in metrics_by_year:
+                metrics_by_year[year] = []
+            # Chuẩn hóa giá trị: loại bỏ dấu phẩy và ký tự không cần thiết
+            value = value.replace(',', '').replace('$', '')
+            metrics_by_year[year].append(f"{metric}: {value}")
+        
+        # Định dạng lại metrics theo năm
+        formatted_metrics = []
+        for year, metric_list in metrics_by_year.items():
+            formatted_metrics.append(f"{year}: {', '.join(metric_list)}")
+        
+        # Nếu không tìm thấy chỉ số, lấy tối đa 1000 ký tự
+        if not formatted_metrics:
+            content = content[:1000] + ("..." if len(content) > 1000 else "")
+            formatted_metrics = [content]
+        
+        rag_by_company[company].append(f"{company}: {'; '.join(formatted_metrics)} from {doc['filename']}")
+
+    return "\n".join(f"{company}: " + "; ".join(entries) for company, entries in rag_by_company.items())
+
+def prepare_sql_summary(sql_response: str, config: dict, tickers: list, required_columns: list = None, dashboard_enabled: bool = False) -> str:
+    if "Dữ liệu từ cơ sở dữ liệu" not in sql_response:
+        return config['formatting']['sql']['empty_message']['vi']
+
+    match = re.search(r'\[(.*)\]', sql_response, re.DOTALL)
+    if not match:
+        return config['formatting']['sql']['empty_message']['vi']
+
+    try:
+        json_str = match.group(1)
+        data = json.loads(f"[{json_str}]")
+        if not data:
+            return config['formatting']['sql']['empty_message']['vi']
+
+        summaries = []
+        required_columns = required_columns or []
+        if dashboard_enabled and required_columns and all(col in data[0] for col in required_columns):
+            if "symbol" in required_columns and "close_price" in required_columns:
+                ticker_map = {record['symbol']: record['close_price'] for record in data}
+                formatted_data = [f"{ticker}: {ticker_map[ticker]} USD" for ticker in tickers if ticker in ticker_map]
+                summaries.append(", ".join(formatted_data))
+            elif "avg_close_price" in required_columns:
+                formatted_data = [f"{tickers[0] if tickers else 'Company'}: {record['avg_close_price']} USD" for record in data]
+                summaries.append(", ".join(formatted_data))
+            elif "daily_return" in required_columns:
+                valid_returns = [record['daily_return'] for record in data if isinstance(record['daily_return'], (int, float)) and not pd.isna(record['daily_return'])]
+                if valid_returns:
+                    avg_return = sum(valid_returns) / len(valid_returns)
+                    summaries.append(f"{tickers[0] if tickers else 'Company'} Daily Returns: Trung bình {avg_return:.4f}")
+                else:
+                    summaries.append("Không có dữ liệu lợi nhuận hàng ngày hợp lệ.")
+            elif "sector" in required_columns and "count" in required_columns:
+                formatted_data = [f"{record['sector']}: {record['count']}" for record in data]
+                summaries.append(", ".join(formatted_data))
+            elif "date" in required_columns and "close_price" in required_columns:
+                df = pd.DataFrame(data)
+                df['month'] = pd.to_datetime(df['date']).dt.strftime('%Y-%m')
+                monthly_avg = df.groupby('month')['close_price'].mean().round(2)
+                formatted_data = [f"{month}: {price} USD" for month, price in monthly_avg.items()]
+                summaries.append(", ".join(formatted_data))
+            elif "avg_daily_volume" in required_columns and "avg_closing_price" in required_columns:
+                formatted_data = [f"{record['symbol']}: Volume {record['avg_daily_volume']:.0f}, Price {record['avg_closing_price']:.2f} USD" for record in data[:5]]
+                summaries.append(", ".join(formatted_data) + (", ..." if len(data) > 5 else ""))
+        else:
+            # Khi Dashboard: false, không validate required_columns, chỉ hiển thị dữ liệu thô
+            for record in data:
+                for key, value in record.items():
+                    summaries.append(f"{key.replace('_', ' ').title()}: {value}")
+        return "\n".join(summaries)
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse SQL data: {str(e)}")
+        return config['formatting']['sql']['empty_message']['vi']
+    
+def prepare_dashboard_summary(dashboard_info: dict, config: dict) -> str:
+    if not dashboard_info.get('enabled', False) or not isinstance(dashboard_info.get('data', []), list) or len(dashboard_info['data']) == 0:
+        return config['formatting']['dashboard']['empty_message']['vi']
+
+    vis_type = dashboard_info['visualization'].get('type', 'none')
+    ui_requirements = dashboard_info['visualization'].get('ui_requirements', {})
+    template = config['formatting']['dashboard'].get('vis_type_templates', {}).get(vis_type, config['formatting']['dashboard'].get('default_template', {'vi': "Biểu đồ {vis_type} thể hiện dữ liệu."}))
+    
+    summary = template['vi'].format(
+        vis_type=vis_type,
+        group_col=ui_requirements.get('group_col', 'group'),
+        value_col=ui_requirements.get('value_col', 'value'),
+        x_col=ui_requirements.get('x_col', 'x'),
+        y_col=ui_requirements.get('y_col', 'y'),
+        category_col=ui_requirements.get('category_col', 'category')
+    )
+
+    if dashboard_info['data']:
+        key_points = []
+        for record in dashboard_info['data'][:3]:
+            if 'sector' in record and 'proportion' in record:
+                key_points.append(f"{record['sector']} ({record['proportion']}%)")
+        if key_points:
+            summary += " " + ", ".join(key_points) + "."
+    return summary
+
+def orchestrator_flow(query: str, orchestrator: Agent, sql_agent, sql_tool, rag_tool, chat_completion_agent, thinking_queue=None, chat_history=None) -> dict:
     metadata = load_metadata()
     visualize_agent = create_visualize_agent()
     
@@ -133,10 +259,17 @@ def orchestrator_flow(query: str, orchestrator: Agent, sql_agent, sql_tool, rag_
     }
     
     try:
+        # Push thinking message
+        if thinking_queue:
+            thinking_queue.put("Đang phân tích query...")
+
         # Process Orchestrator response
-        result, token_metrics["orchestrator"] = process_response(orchestrator.run(query), "Orchestrator")
+        input_data = {"query": query, "chat_history": chat_history or []}
+        result, token_metrics["orchestrator"] = process_response(orchestrator.run(json.dumps(input_data)), "Orchestrator")
         result_dict = result
         logger.info(f"Orchestrator Response: {json.dumps(result_dict, indent=2, ensure_ascii=False)}")
+        if thinking_queue:
+            thinking_queue.put(f"Orchestrator: Phân tích truy vấn: {json.dumps(result_dict, ensure_ascii=False)[:200]}...")
 
         if result_dict.get("status") == "error":
             return {
@@ -148,7 +281,11 @@ def orchestrator_flow(query: str, orchestrator: Agent, sql_agent, sql_tool, rag_
                 "logs": get_collected_logs()
             }
 
+        if thinking_queue:
+            thinking_queue.put("Đang xác định các agent cần dùng...")
+
         data = result_dict.get("data", {})
+        tickers = data.get("tickers", [])  # Định nghĩa tickers từ data
         rag_documents = []
         sql_response = "No response from SQL."
         actual_results = []
@@ -166,8 +303,10 @@ def orchestrator_flow(query: str, orchestrator: Agent, sql_agent, sql_tool, rag_
                     "logs": get_collected_logs()
                 }
             if agent_name == "text2sql_agent":
+                if thinking_queue:
+                    thinking_queue.put("Đang sinh SQL query...")
                 metadata_with_columns = {
-                    "tickers": data.get("tickers", []),
+                    "tickers": tickers,
                     "date_range": data.get("date_range"),
                     "visualized_template": metadata["visualized_template"]
                 }
@@ -177,37 +316,43 @@ def orchestrator_flow(query: str, orchestrator: Agent, sql_agent, sql_tool, rag_
                 sql_response = limit_sql_records(response_for_chat, max_records=5)
                 dashboard_result = actual_result
                 limited_result = limit_records(actual_result, max_records=5, for_dashboard=False)
+                if thinking_queue:
+                    sql_query = final_response.get("sql_query", "Không có câu SQL cụ thể.")
+                    thinking_queue.put(f"SQL: {sql_query}")
+                    thinking_queue.put(f"Kết quả SQL: {json.dumps(actual_result, ensure_ascii=False)[:200]}...")
                 logger.info(f"SQL Response (limited for log): {sql_response}")
                 logger.info(f"Dashboard records: {len(dashboard_result)}, Limited log records: {len(limited_result)}")
                 actual_results.append(dashboard_result)
-                # Assuming sql_flow returns metrics (needs adjustment in sql_flow.py)
                 token_metrics["text2sql"] = final_response.get("token_metrics", {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0})
 
             elif agent_name == "rag_agent":
+                if thinking_queue:
+                    thinking_queue.put("Đang tìm kiếm tài liệu RAG...")
                 rag_documents = rag_flow(sub_query, rag_tool)
+                if thinking_queue:
+                    thinking_queue.put(f"RAG: {json.dumps(rag_documents, ensure_ascii=False)[:200]}...")
                 logger.info(f"RAG Documents: {rag_documents}")
+
+        if thinking_queue:
+            thinking_queue.put("Đang chuẩn bị visualization...")
 
         dashboard_enabled = data.get("Dashboard", False) and bool(actual_results and actual_results[0])
         dashboard_data = actual_results[0] if actual_results else []
         limited_dashboard_data = limit_records(dashboard_data, max_records=5, for_chat_input=True)
-        # Limit data for Visualize Agent
         vis_dashboard_data = limit_records(dashboard_data, for_dashboard=True)
 
-        # Run Visualize Agent if dashboard is enabled
         visualization_config = {}
         if dashboard_enabled:
             vis_input = {
                 "data": vis_dashboard_data,
                 "query": query
             }
-            # Serialize vis_input to JSON string
             vis_input_str = json.dumps(vis_input, ensure_ascii=False)
             vis_response = visualize_agent.run(vis_input_str)
             if isinstance(vis_response, RunResponse):
                 visualization_config = vis_response.content
                 if isinstance(visualization_config, str):
                     visualization_config = json.loads(visualization_config)
-                # Extract token metrics from Visualize Agent
                 metrics = getattr(vis_response, 'metrics', {})
                 token_metrics["visualize"]["input_tokens"] = metrics.get('input_tokens', 0)
                 token_metrics["visualize"]["output_tokens"] = metrics.get('output_tokens', 0)
@@ -215,6 +360,8 @@ def orchestrator_flow(query: str, orchestrator: Agent, sql_agent, sql_tool, rag_
                 logger.info(f"[Visualize] Token metrics: Input tokens={token_metrics['visualize']['input_tokens']}, Output tokens={token_metrics['visualize']['output_tokens']}, Total tokens={token_metrics['visualize']['total_tokens']}")
             else:
                 visualization_config = vis_response
+            if thinking_queue:
+                thinking_queue.put(f"Visualized: {json.dumps(visualization_config, ensure_ascii=False)[:200]}...")
             logger.info(f"Visualize Agent config: {json.dumps(visualization_config, ensure_ascii=False)}")
             if visualization_config.get("error"):
                 logger.error(f"Visualize Agent error: {visualization_config['error']}")
@@ -231,15 +378,26 @@ def orchestrator_flow(query: str, orchestrator: Agent, sql_agent, sql_tool, rag_
             }
         }
 
-        final_response_message = chat_completion_flow(query, rag_documents, sql_response, dashboard_info, chat_completion_agent, tickers=data.get("tickers", []))
-        # Assuming chat_completion_flow returns metrics (needs adjustment in chat_completion_flow.py)
+        if thinking_queue:
+            thinking_queue.put("Đang sinh câu trả lời cuối...")
+        final_response_message = chat_completion_flow(query, rag_documents, sql_response, dashboard_info, chat_completion_agent, tickers=tickers)
         final_response_message_dict = final_response_message if isinstance(final_response_message, dict) else {"content": final_response_message}
         token_metrics["chat_completion"] = final_response_message_dict.get("token_metrics", {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0})
+        if thinking_queue:
+            chat_input = (
+                f"Query: {query}\n"
+                f"Tickers: {json.dumps(tickers)}\n"
+                f"RAG Summary: {prepare_rag_summary(rag_documents, load_config())[:200]}...\n"
+                f"SQL Summary: {prepare_sql_summary(sql_response, load_config(), tickers)[:200]}...\n"
+                f"Dashboard Summary: {prepare_dashboard_summary(dashboard_info, load_config())[:200]}..."
+            )
+            thinking_queue.put(f"Chat Completion Input: {chat_input}")
+            thinking_queue.put(f"Chat Completion Output: {final_response_message_dict.get('content', 'No response')[:200]}...")
         logger.info(f"Final response message: {final_response_message_dict.get('content', final_response_message)}")
 
         final_dashboard_info = {
             "enabled": dashboard_enabled,
-            "data": dashboard_data,  # Đầy đủ record cho UI
+            "data": dashboard_data,
             "visualization": {
                 "type": visualization_config.get("type", "none"),
                 "required_columns": visualization_config.get("required_columns", []),
@@ -249,9 +407,9 @@ def orchestrator_flow(query: str, orchestrator: Agent, sql_agent, sql_tool, rag_
         }
         final_response = {
             "status": "success",
-            "message": final_response_message_dict.get("content", "No response available."),
+            "message": final_response_message_dict.get("content", "Không có phản hồi chi tiết."),
             "data": {
-                "result": final_response_message_dict.get("content", "No response available."),
+                "result": final_response_message_dict.get("content", "Không có phản hồi chi tiết."),
                 "dashboard": final_dashboard_info,
                 "token_metrics": token_metrics
             },
