@@ -13,7 +13,6 @@ from config.env import QDRANT_HOST, QDRANT_PORT, RAG_DATA_DIR
 from utils.logging import setup_logging
 from utils.validators import validate_rag_dir
 from utils.company_mapping import build_company_mapping, map_company_name, normalize_company_name
-from sklearn.metrics.pairwise import cosine_similarity
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(BASE_DIR))
