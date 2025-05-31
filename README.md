@@ -736,14 +736,6 @@ mypy agents/ tools/ flow/
 
 ---
 
-## Hỗ Trợ & Liên Hệ
-
-- **Issues**: [GitHub Issues](https://github.com/your-repo/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/your-repo/discussions)  
-- **Email**: your-email@domain.com
-
----
-
 ## License
 
 Dự án này được phát hành dưới [MIT License](LICENSE).
